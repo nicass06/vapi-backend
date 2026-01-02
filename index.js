@@ -7,54 +7,18 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🔴 HIER SPÄTER ANPASSEN
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 const AIRTABLE_TABLE = "Reservations";
 const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
 const MAX_CAPACITY = 100;
 
-
-// Hilfsfunktion
 function toISO(date, time) {
   return `${date}T${time}:00`;
 }
-
-// API-Endpunkt
 app.post("/check-availability", async (req, res) => {
   try {
     const { date, time_text, guests } = req.body;
-
-    const time = time_text; // <-- WICHTIG
-app.post("/create-reservation", async (req, res) => {
-  try {
-    const { date, time_text, guests } = req.body;
-
-    const response = await axios.post(
-      `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Reservations`,
-      {
-        fields: {
-          date,
-          time_text,
-          guests,
-          status: "bestätigt"
-        }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`,
-          "Content-Type": "application/json"
-        }
-      }
-    );
-
-    res.json({ success: true, recordId: response.data.id });
-  } catch (error) {
-    console.error(error.response?.data || error.message);
-    res.status(500).json({ error: "Could not create reservation" });
-  }
-});
-
-
+    const time = time_text;
 
     const start = new Date(toISO(date, time));
     const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
@@ -91,12 +55,38 @@ AND(
       remainingSeats: MAX_CAPACITY - totalGuests,
     });
   } catch (error) {
-    console.error(error);
+    console.error(error.response?.data || error.message);
     res.status(500).json({ error: "Server error" });
   }
 });
+app.post("/create-reservation", async (req, res) => {
+  try {
+    const { date, time_text, guests } = req.body;
 
-// Server starten
+    const response = await axios.post(
+      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}`,
+      {
+        fields: {
+          date,
+          time_text,
+          guests,
+          status: "bestätigt",
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    res.json({ success: true, recordId: response.data.id });
+  } catch (error) {
+    console.error(error.response?.data || error.message);
+    res.status(500).json({ error: "Could not create reservation" });
+  }
+});
 app.listen(3000, () => {
-  console.log("✅ Server läuft auf http://localhost:3000");
+  console.log("Server läuft auf http://localhost:3000");
 });
