@@ -25,6 +25,35 @@ app.post("/check-availability", async (req, res) => {
     const { date, time_text, guests } = req.body;
 
     const time = time_text; // <-- WICHTIG
+app.post("/create-reservation", async (req, res) => {
+  try {
+    const { date, time_text, guests } = req.body;
+
+    const response = await axios.post(
+      `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Reservations`,
+      {
+        fields: {
+          date,
+          time_text,
+          guests,
+          status: "bestätigt"
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    res.json({ success: true, recordId: response.data.id });
+  } catch (error) {
+    console.error(error.response?.data || error.message);
+    res.status(500).json({ error: "Could not create reservation" });
+  }
+});
+
 
 
     const start = new Date(toISO(date, time));
