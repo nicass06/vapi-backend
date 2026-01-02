@@ -22,7 +22,10 @@ function toISO(date, time) {
 // API-Endpunkt
 app.post("/check-availability", async (req, res) => {
   try {
-    const { date, time, guests } = req.body;
+    const { date, time_text, guests } = req.body;
+
+    const time = time_text; // <-- WICHTIG
+
 
     const start = new Date(toISO(date, time));
     const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
