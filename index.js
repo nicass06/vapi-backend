@@ -10,7 +10,7 @@ app.use(express.json());
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 const AIRTABLE_TABLE = "Reservations";
 const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
-const MAX_CAPACITY = 100;
+const MAX_CAPACITY = 10;
 
 function toISO(date, time) {
   return `${date}T${time}:00`;
@@ -62,31 +62,64 @@ AND(
 app.post("/create-reservation", async (req, res) => {
   try {
     const { date, time_text, guests } = req.body;
+    const time = time_text;
+
+    const start = new Date(toISO(date, time));
+    const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+
+    const formula = `
+AND(
+  {status}="bestätigt",
+  {start_datetime} < DATETIME_PARSE("${end.toISOString()}"),
+  {end_datetime} > DATETIME_PARSE("${start.toISOString()}")
+)
+`;
+
+    const check = await axios.get(
+      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}`,
+      {
+        headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
+        params: { filterByFormula: formula }
+      }
+    );
+
+    const totalGuests = check.data.records.reduce(
+      (sum, r) => sum + (r.fields.guests || 0),
+      0
+    );
+
+    if (totalGuests + guests > MAX_CAPACITY) {
+      return res.status(409).json({
+        success: false,
+        error: "No capacity available"
+      });
+    }
 
     const response = await axios.post(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}`,
+      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/Reservations`,
       {
         fields: {
           date,
           time_text,
           guests,
-          status: "bestätigt",
-        },
+          status: "bestätigt"
+        }
       },
       {
         headers: {
           Authorization: `Bearer ${AIRTABLE_TOKEN}`,
-          "Content-Type": "application/json",
-        },
+          "Content-Type": "application/json"
+        }
       }
     );
 
     res.json({ success: true, recordId: response.data.id });
   } catch (error) {
-    console.error(error.response?.data || error.message);
+    console.error(error);
     res.status(500).json({ error: "Could not create reservation" });
   }
 });
+
 app.listen(3000, () => {
   console.log("Server läuft auf http://localhost:3000");
 });
