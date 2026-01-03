@@ -20,20 +20,18 @@ const MAX_CAPACITY = 10; // <<< HIER DEINE MAX KAPAZITÄT
 // =====================
 app.post("/check-availability", async (req, res) => {
   try {
-    console.log("CHECK AVAILABILITY CALLED");
+    console.log("=== CHECK AVAILABILITY START ===");
     console.log("RAW BODY:", req.body);
 
     const { date, time_text, guests } = req.body;
 
-    if (!date || !time_text || !guests) {
-      return res.status(400).json({
-        error: "Missing required fields",
-        received: req.body
-      });
-    }
+    console.log("PARSED:", date, time_text, guests);
 
     const start = new Date(`${date}T${time_text}:00`);
     const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+
+    console.log("START:", start.toISOString());
+    console.log("END:", end.toISOString());
 
     const formula = `
 AND(
@@ -43,24 +41,33 @@ AND(
 )
 `;
 
+    console.log("FORMULA:", formula);
+
     const response = await axios.get(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}`,
+      `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Reservations`,
       {
         headers: {
-          Authorization: `Bearer ${AIRTABLE_TOKEN}`
+          Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`
         },
-        params: {
-          filterByFormula: formula
-        }
+        params: { filterByFormula: formula }
       }
     );
+
+    console.log("AIRTABLE RESPONSE OK");
+    console.log("RECORD COUNT:", response.data.records.length);
 
     const totalGuests = response.data.records.reduce(
       (sum, r) => sum + (r.fields.guests || 0),
       0
     );
 
+    console.log("TOTAL GUESTS:", totalGuests);
+
+    const MAX_CAPACITY = 10;
     const available = totalGuests + guests <= MAX_CAPACITY;
+
+    console.log("REQUESTED:", guests);
+    console.log("AVAILABLE:", available);
 
     res.json({
       available,
@@ -68,10 +75,12 @@ AND(
     });
 
   } catch (error) {
-    console.error("CHECK ERROR:", error.response?.data || error.message);
+    console.error("❌ CHECK AVAILABILITY ERROR");
+    console.error(error.response?.data || error.message);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 // =====================
 // CREATE RESERVATION
