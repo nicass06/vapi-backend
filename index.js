@@ -19,20 +19,28 @@ const MAX_CAPACITY = 10; // <<< HIER DEINE MAX KAPAZITÄT
 // CHECK AVAILABILITY
 // =====================
 app.post("/check-availability", async (req, res) => {
-  try {
-    console.log("=== CHECK AVAILABILITY START ===");
-    console.log("RAW BODY:", req.body);
+  console.log("=== CHECK AVAILABILITY START ===");
+  console.log("RAW BODY:", req.body);
 
+  try {
     const { date, time_text, guests } = req.body;
 
-    console.log("PARSED:", date, time_text, guests);
+    if (!date || !time_text || !guests) {
+      console.log("❌ Missing required fields");
+      return res.status(400).json({ error: "Missing required fields" });
+    }
 
+    // Startzeit (ISO)
     const start = new Date(`${date}T${time_text}:00`);
+
+    // Endzeit = Start + 2 Stunden
     const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
 
+    console.log("PARSED:", date, time_text, guests);
     console.log("START:", start.toISOString());
     console.log("END:", end.toISOString());
 
+    // 🔑 KORREKTE OVERLAP-FORMEL
     const formula = `
 AND(
   {status}="bestätigt",
@@ -41,7 +49,8 @@ AND(
 )
 `;
 
-    console.log("FORMULA:", formula);
+    console.log("FORMULA:");
+    console.log(formula);
 
     const response = await axios.get(
       `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Reservations`,
@@ -49,24 +58,28 @@ AND(
         headers: {
           Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`
         },
-        params: { filterByFormula: formula }
+        params: {
+          filterByFormula: formula
+        }
       }
     );
 
     console.log("AIRTABLE RESPONSE OK");
     console.log("RECORD COUNT:", response.data.records.length);
 
+    // Gäste summieren
     const totalGuests = response.data.records.reduce(
       (sum, r) => sum + (r.fields.guests || 0),
       0
     );
 
-    console.log("TOTAL GUESTS:", totalGuests);
+    const MAX_CAPACITY = 10; // <- HIER deine maximale Kapazität
 
-    const MAX_CAPACITY = 10;
+    console.log("TOTAL_GUESTS:", totalGuests);
+    console.log("REQUESTED:", guests);
+
     const available = totalGuests + guests <= MAX_CAPACITY;
 
-    console.log("REQUESTED:", guests);
     console.log("AVAILABLE:", available);
 
     res.json({
@@ -76,10 +89,18 @@ AND(
 
   } catch (error) {
     console.error("❌ CHECK AVAILABILITY ERROR");
-    console.error(error.response?.data || error.message);
+
+    if (error.response) {
+      console.error("STATUS:", error.response.status);
+      console.error("DATA:", error.response.data);
+    } else {
+      console.error(error.message);
+    }
+
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 // =====================
