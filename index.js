@@ -65,76 +65,72 @@ app.get("/", (req, res) => {
 ================================ */
 
 app.post("/check-availability", async (req, res) => {
-  console.log("=== CHECK AVAILABILITY START ===");
-  console.log("RAW BODY:", req.body);
-
   try {
+    console.log("=== CHECK AVAILABILITY START ===");
+
     const { date, time_text, guests } = req.body;
 
-    if (!date || !time_text || !guests) {
-      return res.status(400).json({ error: "Missing fields" });
+    const normalizedDate = normalizeDateToFuture(date);
+    if (!normalizedDate || !time_text || !guests) {
+      return res.status(400).json({ error: "Missing data" });
     }
 
-    // Datum normalisieren (falls Jahr fehlt)
-    const normalizedDate = normalizeDateToFuture(date);
-
-    // Start / Ende berechnen (2h Aufenthalt)
     const start = new Date(`${normalizedDate}T${time_text}:00`);
     const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
 
+    console.log("REQUEST:", normalizedDate, time_text, guests);
     console.log("START:", start.toISOString());
     console.log("END:", end.toISOString());
 
-    // 🔥 KORREKTE ÜBERLAPPUNGSFORMEL
-    const formula = `
-AND(
-  {status}="bestätigt",
-  {start_datetime} < DATETIME_PARSE("${end.toISOString()}"),
-  {end_datetime} > DATETIME_PARSE("${start.toISOString()}")
-)
-`.trim();
-
-    console.log("FORMULA:", formula);
-
+    // 👉 Alle bestätigten Reservierungen am selben Tag holen
     const response = await axios.get(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`,
+      `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Reservations`,
       {
         headers: {
-          Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+          Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`,
         },
         params: {
-          filterByFormula: formula,
+          filterByFormula: `AND(
+            {status}="bestätigt",
+            {date}="${normalizedDate}"
+          )`,
         },
       }
     );
 
-    const records = response.data.records || [];
+    let totalGuests = 0;
 
-    const totalGuests = records.reduce(
-      (sum, r) => sum + (r.fields.guests || 0),
-      0
-    );
+    for (const record of response.data.records) {
+      const rStart = new Date(record.fields.start_datetime);
+      const rEnd = new Date(record.fields.end_datetime);
 
-    console.log("RECORD COUNT:", records.length);
-    console.log("TOTAL GUESTS:", totalGuests);
-    console.log("REQUESTED:", guests);
+      const overlaps =
+        start < rEnd &&
+        end > rStart;
 
+      if (overlaps) {
+        totalGuests += record.fields.guests || 0;
+      }
+    }
+
+    const MAX_CAPACITY = 10;
     const available = totalGuests + guests <= MAX_CAPACITY;
 
+    console.log("OVERLAPPING GUESTS:", totalGuests);
+    console.log("REQUESTED:", guests);
     console.log("AVAILABLE:", available);
 
     res.json({
       available,
-      totalGuests,
       remainingSeats: MAX_CAPACITY - totalGuests,
     });
 
-  } catch (error) {
-    console.error("CHECK AVAILABILITY ERROR");
-    console.error(error.response?.data || error.message);
+  } catch (err) {
+    console.error("CHECK AVAILABILITY ERROR", err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 /* ================================
