@@ -29,28 +29,24 @@ const SLOT_DURATION_HOURS = 2;    // Sitzdauer pro Reservierung
  *  - heute 10.01.2026, date = 2024-01-06 → 2027-01-06
  *  - heute 03.01.2026, date = 2024-01-06 → 2026-01-06
  */
-function normalizeDateToFuture(dateString) {
-  const now = new Date();
+function normalizeDateToFuture(dateStr) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
-  const candidate = new Date(dateString + "T00:00:00");
+  let target = new Date(dateStr);
+  target.setHours(0, 0, 0, 0);
 
-  if (candidate < now) {
-    const corrected = new Date(
-      now.getFullYear(),
-      candidate.getMonth(),
-      candidate.getDate()
-    );
+  // Jahr immer zuerst auf aktuelles Jahr setzen
+  target.setFullYear(today.getFullYear());
 
-    // Falls der Tag im aktuellen Jahr schon vorbei ist → nächstes Jahr
-    if (corrected < now) {
-      corrected.setFullYear(corrected.getFullYear() + 1);
-    }
-
-    return corrected.toISOString().split("T")[0];
+  // Wenn Datum schon vorbei → nächstes Jahr
+  if (target < today) {
+    target.setFullYear(today.getFullYear() + 1);
   }
 
-  return dateString;
+  return target.toISOString().slice(0, 10);
 }
+
 
 /* ================================
    HEALTH CHECK
