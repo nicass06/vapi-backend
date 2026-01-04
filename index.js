@@ -44,10 +44,11 @@ app.post("/check-availability", async (req, res) => {
     const formula = `
 AND(
   {status}="bestätigt",
-  {start_datetime} < DATETIME_PARSE("${end.toISOString()}"),
-  {end_datetime} > DATETIME_PARSE("${start.toISOString()}")
+  {start_datetime} < "${end.toISOString()}",
+  {end_datetime} > "${start.toISOString()}"
 )
 `;
+
 
     console.log("FORMULA:");
     console.log(formula);
