@@ -86,43 +86,40 @@ AND(
 // CREATE RESERVATION
 // =====================
 app.post("/create-reservation", async (req, res) => {
-  try {
-    console.log("CREATE RESERVATION CALLED");
-    console.log("RAW BODY:", req.body);
+  console.log("=== CREATE RESERVATION START ===");
+  console.log("RAW BODY:", req.body);
 
-    const { date, time_text, guests, name, phone } = req.body;
+  try {
+    const { date, time_text, guests } = req.body;
 
     if (!date || !time_text || !guests) {
-      return res.status(400).json({
-        error: "Missing required fields",
-        received: req.body
-      });
+      console.log("❌ Missing fields");
+      return res.status(400).json({ error: "Missing required fields" });
     }
 
-    const start = new Date(`${date}T${time_text}:00`);
-    const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+    const payload = {
+      fields: {
+        date: date,
+        time_text: time_text,
+        guests: guests,
+        status: "bestätigt"
+      }
+    };
+
+    console.log("AIRTABLE PAYLOAD:", JSON.stringify(payload, null, 2));
 
     const response = await axios.post(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}`,
-      {
-        fields: {
-          date,
-          time_text,
-          guests,
-          name: name || "Telefon-Reservierung",
-          phone: phone || "",
-          status: "bestätigt",
-          start_datetime: start.toISOString(),
-          end_datetime: end.toISOString()
-        }
-      },
+      `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Reservations`,
+      payload,
       {
         headers: {
-          Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+          Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`,
           "Content-Type": "application/json"
         }
       }
     );
+
+    console.log("✅ AIRTABLE RESPONSE ID:", response.data.id);
 
     res.json({
       success: true,
@@ -130,14 +127,19 @@ app.post("/create-reservation", async (req, res) => {
     });
 
   } catch (error) {
-    console.error("CREATE ERROR:", error.response?.data || error.message);
+    console.error("❌ AIRTABLE ERROR");
+
+    if (error.response) {
+      console.error("STATUS:", error.response.status);
+      console.error("DATA:", error.response.data);
+    } else {
+      console.error(error.message);
+    }
+
     res.status(500).json({ error: "Could not create reservation" });
   }
 });
 
-// =====================
-// SERVER START
-// =====================
 app.listen(3000, () => {
   console.log("✅ Server läuft auf http://localhost:3000");
 });
