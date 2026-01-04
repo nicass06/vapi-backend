@@ -15,6 +15,22 @@ const AIRTABLE_TOKEN = process.env.AIRTABLE_TOKEN;
 const AIRTABLE_TABLE = "Reservations";
 const MAX_CAPACITY = 10; // <<< HIER DEINE MAX KAPAZITÄT
 
+function buildDateWithSmartYear(day, month, timeText) {
+  const now = new Date();
+  let year = now.getFullYear();
+
+  // Monat in JS ist 0-basiert
+  const candidate = new Date(`${year}-${month}-${day}T${timeText}:00`);
+
+  // Wenn Datum schon vorbei ist → nächstes Jahr
+  if (candidate < now) {
+    year += 1;
+  }
+
+  return new Date(`${year}-${month}-${day}T${timeText}:00`);
+}
+
+
 // =====================
 // CHECK AVAILABILITY
 // =====================
@@ -31,7 +47,8 @@ app.post("/check-availability", async (req, res) => {
     }
 
     // Startzeit (ISO)
-    const start = new Date(`${date}T${time_text}:00`);
+    const start = buildDateWithSmartYear(day, month, time_text);
+
 
     // Endzeit = Start + 2 Stunden
     const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
@@ -112,23 +129,34 @@ app.post("/create-reservation", async (req, res) => {
   console.log("RAW BODY:", req.body);
 
   try {
-    const { date, time_text, guests } = req.body;
+    const { day, month, time_text, guests, name, phone } = req.body;
 
-    if (!date || !time_text || !guests) {
-      console.log("❌ Missing fields");
+    if (!day || !month || !time_text || !guests) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
+    // 🔑 GLEICHE ZEITLOGIK WIE BEI CHECK
+    const start = buildDateWithSmartYear(day, month, time_text);
+    const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+
+    console.log("START:", start.toISOString());
+    console.log("END:", end.toISOString());
+
     const payload = {
       fields: {
-        date: date,
-        time_text: time_text,
-        guests: guests,
-        status: "bestätigt"
+        start_datetime: start.toISOString(),
+        end_datetime: end.toISOString(),
+        day,
+        month,
+        time_text,
+        guests,
+        status: "bestätigt",
+        name: name || "",
+        phone: phone || ""
       }
     };
 
-    console.log("AIRTABLE PAYLOAD:", JSON.stringify(payload, null, 2));
+    console.log("AIRTABLE PAYLOAD:", payload);
 
     const response = await axios.post(
       `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Reservations`,
@@ -141,7 +169,7 @@ app.post("/create-reservation", async (req, res) => {
       }
     );
 
-    console.log("✅ AIRTABLE RESPONSE ID:", response.data.id);
+    console.log("✅ AIRTABLE RECORD CREATED:", response.data.id);
 
     res.json({
       success: true,
@@ -149,7 +177,7 @@ app.post("/create-reservation", async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ AIRTABLE ERROR");
+    console.error("❌ CREATE RESERVATION ERROR");
 
     if (error.response) {
       console.error("STATUS:", error.response.status);
@@ -161,6 +189,7 @@ app.post("/create-reservation", async (req, res) => {
     res.status(500).json({ error: "Could not create reservation" });
   }
 });
+
 
 app.listen(3000, () => {
   console.log("✅ Server läuft auf http://localhost:3000");
