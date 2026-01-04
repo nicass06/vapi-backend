@@ -41,83 +41,77 @@ app.post("/check-availability", async (req, res) => {
   try {
     const { date, time_text, guests } = req.body;
 
+    // 🔒 Validierung
     if (!date || !time_text || !guests) {
-      console.log("❌ Missing required fields");
+      console.error("❌ Missing fields");
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // Startzeit (ISO)
-    const start = buildDateWithSmartYear(day, month, time_text);
-
-
-    // Endzeit = Start + 2 Stunden
+    // 🕒 Start- & Endzeit (2 Stunden Block)
+    const start = new Date(`${date}T${time_text}:00`);
     const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
 
     console.log("PARSED:", date, time_text, guests);
     console.log("START:", start.toISOString());
     console.log("END:", end.toISOString());
 
-    // 🔑 KORREKTE OVERLAP-FORMEL
+    // 🧠 Airtable-Overlap-Formel
     const formula = `
 AND(
   {status}="bestätigt",
-  {start_datetime} < "${end.toISOString()}",
-  {end_datetime} > "${start.toISOString()}"
+  {start_datetime} < DATETIME_PARSE("${end.toISOString()}"),
+  {end_datetime} > DATETIME_PARSE("${start.toISOString()}")
 )
-`;
-
+`.trim();
 
     console.log("FORMULA:");
     console.log(formula);
 
+    // 📡 Airtable abfragen
     const response = await axios.get(
-      `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/Reservations`,
+      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}`,
       {
         headers: {
-          Authorization: `Bearer ${process.env.AIRTABLE_TOKEN}`
+          Authorization: `Bearer ${AIRTABLE_TOKEN}`,
         },
         params: {
-          filterByFormula: formula
-        }
+          filterByFormula: formula,
+        },
       }
     );
 
     console.log("AIRTABLE RESPONSE OK");
     console.log("RECORD COUNT:", response.data.records.length);
 
-    // Gäste summieren
+    // ➕ Gäste summieren
     const totalGuests = response.data.records.reduce(
       (sum, r) => sum + (r.fields.guests || 0),
       0
     );
 
-    const MAX_CAPACITY = 10; // <- HIER deine maximale Kapazität
-
-    console.log("TOTAL_GUESTS:", totalGuests);
+    console.log("TOTAL GUESTS:", totalGuests);
     console.log("REQUESTED:", guests);
 
     const available = totalGuests + guests <= MAX_CAPACITY;
 
     console.log("AVAILABLE:", available);
 
-    res.json({
+    // ✅ Antwort an VAPI
+    return res.json({
       available,
-      remainingSeats: Math.max(0, MAX_CAPACITY - totalGuests)
+      remainingSeats: MAX_CAPACITY - totalGuests,
+      requestedGuests: guests,
+      alreadyBooked: totalGuests,
     });
 
   } catch (error) {
     console.error("❌ CHECK AVAILABILITY ERROR");
+    console.error(error.response?.data || error.message);
 
-    if (error.response) {
-      console.error("STATUS:", error.response.status);
-      console.error("DATA:", error.response.data);
-    } else {
-      console.error(error.message);
-    }
-
-    res.status(500).json({ error: "Server error" });
+    return res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 
