@@ -55,10 +55,11 @@ function normalizeDateToNextFuture(dateInput) {
 
 // 🕒 Start / Ende berechnen
 function buildStartEnd(dateISO, timeText) {
-  const start = new Date(`${dateISO}T${timeText}:00.000Z`);
-  const end = new Date(start.getTime() + SLOT_DURATION_MS - 1);
+  const start = new Date(`${dateISO}T${timeText}:00`);
+  const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
   return { start, end };
 }
+
 
 /* =========================
    HEALTH CHECK
