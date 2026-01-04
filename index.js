@@ -175,8 +175,6 @@ app.post("/create-reservation", async (req, res) => {
         date: normalizedDate,
         time_text,
         guests,
-        start_datetime: start.toISOString(),
-        end_datetime: end.toISOString(),
         status: "bestätigt",
         ...(name && { name }),
         ...(phone && { phone }),
