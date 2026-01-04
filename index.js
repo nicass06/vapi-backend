@@ -72,29 +72,25 @@ app.post("/check-availability", async (req, res) => {
     const { date, time_text, guests } = req.body;
 
     if (!date || !time_text || !guests) {
-      return res.status(400).json({
-        success: false,
-        message: "Missing required fields",
-      });
+      return res.status(400).json({ error: "Missing fields" });
     }
 
+    // Datum normalisieren (falls Jahr fehlt)
     const normalizedDate = normalizeDateToFuture(date);
 
+    // Start / Ende berechnen (2h Aufenthalt)
     const start = new Date(`${normalizedDate}T${time_text}:00`);
-    const end = new Date(
-      start.getTime() + SLOT_DURATION_HOURS * 60 * 60 * 1000
-    );
+    const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
 
-    console.log("NORMALIZED DATE:", normalizedDate);
     console.log("START:", start.toISOString());
     console.log("END:", end.toISOString());
 
-    // 🔑 Overlap-Logik (2-Stunden-Fenster)
+    // 🔥 KORREKTE ÜBERLAPPUNGSFORMEL
     const formula = `
 AND(
   {status}="bestätigt",
-  {start_datetime} < "${end.toISOString()}",
-  {end_datetime} > "${start.toISOString()}"
+  {start_datetime} < DATETIME_PARSE("${end.toISOString()}"),
+  {end_datetime} > DATETIME_PARSE("${start.toISOString()}")
 )
 `.trim();
 
@@ -112,34 +108,34 @@ AND(
       }
     );
 
-    const totalGuests = response.data.records.reduce(
+    const records = response.data.records || [];
+
+    const totalGuests = records.reduce(
       (sum, r) => sum + (r.fields.guests || 0),
       0
     );
 
-    const available = totalGuests + guests <= MAX_CAPACITY;
-
+    console.log("RECORD COUNT:", records.length);
     console.log("TOTAL GUESTS:", totalGuests);
     console.log("REQUESTED:", guests);
+
+    const available = totalGuests + guests <= MAX_CAPACITY;
+
     console.log("AVAILABLE:", available);
 
-    return res.json({
-      success: true,
+    res.json({
       available,
-      remainingSeats: Math.max(0, MAX_CAPACITY - totalGuests),
-      alreadyBooked: totalGuests,
+      totalGuests,
+      remainingSeats: MAX_CAPACITY - totalGuests,
     });
 
   } catch (error) {
     console.error("CHECK AVAILABILITY ERROR");
     console.error(error.response?.data || error.message);
-
-    return res.status(500).json({
-      success: false,
-      message: "Server error",
-    });
+    res.status(500).json({ error: "Server error" });
   }
 });
+
 
 /* ================================
    CREATE RESERVATION
