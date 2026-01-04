@@ -43,7 +43,7 @@ function normalizeDateToFuture(dateStr) {
 // ISO-Start / Ende berechnen
 function buildStartEnd(dateISO, timeText) {
   const start = new Date(`${dateISO}T${timeText}:00.000Z`);
-  const end = new Date(start.getTime() + SLOT_DURATION_HOURS * 60 * 60 * 1000);
+  const end = new Date(start.getTime() + SLOT_DURATION_HOURS * 60 * 60 * 1000 - 1);
   return { start, end };
 }
 
