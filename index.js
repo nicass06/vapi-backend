@@ -144,6 +144,9 @@ app.post("/create-reservation", async (req, res) => {
   try {
     const { date, time_text, guests, name, phone } = req.body;
 
+    const normalizedDate = normalizeDateToFuture(date);
+
+
     if (!date || !time_text || !guests) {
       return res.status(400).json({
         success: false,
