@@ -27,7 +27,7 @@ function normalizeDateToNextFuture(dateInput) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // ISO kommt direkt durch
+  // Fall 1: ISO-Datum kommt von Vapi (YYYY-MM-DD)
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
     const d = new Date(dateInput + "T00:00:00");
     if (d < today) {
@@ -36,22 +36,27 @@ function normalizeDateToNextFuture(dateInput) {
     return d.toISOString().slice(0, 10);
   }
 
-  // Formate wie 5.1. oder 05.01
+  // Fall 2: Format wie "5.1." oder "05.01"
   const match = dateInput.match(/^(\d{1,2})\.(\d{1,2})$/);
-  if (!match) return null;
+  if (!match) {
+    throw new Error("Invalid date format");
+  }
 
   const day = Number(match[1]);
   const month = Number(match[2]) - 1;
 
   let year = today.getFullYear();
   let candidate = new Date(year, month, day);
+  candidate.setHours(0, 0, 0, 0);
 
+  // Wenn Datum dieses Jahr schon vorbei → nächstes Jahr
   if (candidate < today) {
-    candidate.setFullYear(year + 1);
+    candidate = new Date(year + 1, month, day);
   }
 
   return candidate.toISOString().slice(0, 10);
 }
+
 
 // 🕒 Start / Ende berechnen
 function buildStartEnd(dateISO, timeText) {
