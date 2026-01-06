@@ -60,6 +60,38 @@ function normalizeDateToNextFuture(dateInput) {
 
 
 
+function normalizeDate(dateInput) {
+  // Erwartet z. B. "2026-01-15" oder "15.01."
+  if (!dateInput) throw new Error("date missing");
+
+  // ISO-Format -> direkt zurück
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+    return dateInput;
+  }
+
+  // Format: 15.01. oder 15.1.
+  const match = dateInput.match(/^(\d{1,2})\.(\d{1,2})\.?$/);
+  if (!match) {
+    throw new Error("invalid date format");
+  }
+
+  const day = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10) - 1;
+
+  const now = new Date();
+  let year = now.getFullYear();
+
+  const candidate = new Date(year, month, day);
+  if (candidate < now) {
+    year += 1; // nächstes Jahr nehmen
+  }
+
+  return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+
+
+
 // 🕒 Start / Ende berechnen
 function buildStartEnd(dateISO, timeText) {
   const start = new Date(`${dateISO}T${timeText}:00`);
