@@ -224,27 +224,24 @@ app.post("/cancel-reservation", async (req, res) => {
 
     const { date, time_text, name, phone } = req.body;
 
-    if (!date || !time_text) {
-      return res.status(400).json({ error: "date and time_text required" });
-    }
+    const normalizedDate = normalizeDate(date);
+    const start = new Date(`${normalizedDate}T${time_text}:00`);
 
-    const normalizedDate = normalizeDateToNextFuture(date);
+    console.log("NORMALIZED DATE:", normalizedDate);
+    console.log("START:", start.toISOString());
 
-    // Airtable-Filter: passende bestätigte Reservierung suchen
-    let formula = `AND(
-      {status}="bestätigt",
-      {date}="${normalizedDate}",
-      {time_text}="${time_text}"
-    )`;
+    const filterFormula = `
+AND(
+  {status}="bestätigt",
+  IS_SAME(
+    {start_datetime},
+    DATETIME_PARSE("${start.toISOString()}"),
+    'minute'
+  )
+)
+`;
 
-    // Optional: Name oder Telefonnummer einschränken
-    if (phone) {
-      formula = `AND(${formula}, {phone}="${phone}")`;
-    } else if (name) {
-      formula = `AND(${formula}, {name}="${name}")`;
-    }
-
-    console.log("FILTER FORMULA:", formula);
+    console.log("FILTER FORMULA:", filterFormula);
 
     const search = await axios.get(
       `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}`,
@@ -253,13 +250,13 @@ app.post("/cancel-reservation", async (req, res) => {
           Authorization: `Bearer ${AIRTABLE_TOKEN}`,
         },
         params: {
-          filterByFormula: formula,
+          filterByFormula: filterFormula,
         },
       }
     );
 
     if (search.data.records.length === 0) {
-      return res.json({
+      return res.status(404).json({
         success: false,
         message: "Keine passende Reservierung gefunden",
       });
@@ -267,7 +264,6 @@ app.post("/cancel-reservation", async (req, res) => {
 
     const recordId = search.data.records[0].id;
 
-    // Status auf "storniert" setzen
     await axios.patch(
       `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}/${recordId}`,
       {
@@ -283,17 +279,13 @@ app.post("/cancel-reservation", async (req, res) => {
       }
     );
 
-    console.log("RESERVATION CANCELED:", recordId);
-
-    res.json({
-      success: true,
-      message: "Reservierung wurde storniert",
-    });
-  } catch (err) {
-    console.error("CANCEL ERROR:", err.response?.data || err.message);
-    res.status(500).json({ error: "Server error" });
+    res.json({ success: true });
+  } catch (error) {
+    console.error("CANCEL RESERVATION ERROR", error.response?.data || error);
+    res.status(500).json({ error: "Could not cancel reservation" });
   }
 });
+
 
 
 /* =========================
