@@ -214,6 +214,89 @@ app.post("/create-reservation", async (req, res) => {
 });
 
 /* =========================
+   CANCEL RESERVATION
+========================= */
+
+app.post("/cancel-reservation", async (req, res) => {
+  try {
+    console.log("=== CANCEL RESERVATION START ===");
+    console.log("RAW BODY:", req.body);
+
+    const { date, time_text, name, phone } = req.body;
+
+    if (!date || !time_text) {
+      return res.status(400).json({ error: "date and time_text required" });
+    }
+
+    const normalizedDate = normalizeDateToNextFuture(date);
+
+    // Airtable-Filter: passende bestätigte Reservierung suchen
+    let formula = `AND(
+      {status}="bestätigt",
+      {date}="${normalizedDate}",
+      {time_text}="${time_text}"
+    )`;
+
+    // Optional: Name oder Telefonnummer einschränken
+    if (phone) {
+      formula = `AND(${formula}, {phone}="${phone}")`;
+    } else if (name) {
+      formula = `AND(${formula}, {name}="${name}")`;
+    }
+
+    console.log("FILTER FORMULA:", formula);
+
+    const search = await axios.get(
+      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}`,
+      {
+        headers: {
+          Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+        },
+        params: {
+          filterByFormula: formula,
+        },
+      }
+    );
+
+    if (search.data.records.length === 0) {
+      return res.json({
+        success: false,
+        message: "Keine passende Reservierung gefunden",
+      });
+    }
+
+    const recordId = search.data.records[0].id;
+
+    // Status auf "storniert" setzen
+    await axios.patch(
+      `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}/${recordId}`,
+      {
+        fields: {
+          status: "storniert",
+        },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    console.log("RESERVATION CANCELED:", recordId);
+
+    res.json({
+      success: true,
+      message: "Reservierung wurde storniert",
+    });
+  } catch (err) {
+    console.error("CANCEL ERROR:", err.response?.data || err.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+
+/* =========================
    SERVER START
 ========================= */
 
