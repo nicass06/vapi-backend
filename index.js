@@ -27,35 +27,37 @@ function normalizeDateToNextFuture(dateInput) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // Fall 1: ISO-Datum kommt von Vapi (YYYY-MM-DD)
+  let candidate;
+
+  // Fall 1: ISO-Datum (kommt oft von Vapi)
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
-    const d = new Date(dateInput + "T00:00:00");
-    if (d < today) {
-      d.setFullYear(d.getFullYear() + 1);
+    candidate = new Date(dateInput + "T00:00:00");
+  }
+  // Fall 2: "5.1." oder "05.01"
+  else {
+    const match = dateInput.match(/^(\d{1,2})\.(\d{1,2})$/);
+    if (!match) {
+      throw new Error("Invalid date format: " + dateInput);
     }
-    return d.toISOString().slice(0, 10);
+
+    const day = Number(match[1]);
+    const month = Number(match[2]) - 1;
+    const currentYear = today.getFullYear();
+
+    candidate = new Date(currentYear, month, day);
   }
 
-  // Fall 2: Format wie "5.1." oder "05.01"
-  const match = dateInput.match(/^(\d{1,2})\.(\d{1,2})$/);
-  if (!match) {
-    throw new Error("Invalid date format");
-  }
-
-  const day = Number(match[1]);
-  const month = Number(match[2]) - 1;
-
-  let year = today.getFullYear();
-  let candidate = new Date(year, month, day);
   candidate.setHours(0, 0, 0, 0);
 
-  // Wenn Datum dieses Jahr schon vorbei → nächstes Jahr
-  if (candidate < today) {
-    candidate = new Date(year + 1, month, day);
+  // 🔥 DAS IST DER ENTSCHEIDENDE TEIL 🔥
+  // Jahr so lange erhöhen, bis Datum in der Zukunft liegt
+  while (candidate < today) {
+    candidate.setFullYear(candidate.getFullYear() + 1);
   }
 
   return candidate.toISOString().slice(0, 10);
 }
+
 
 
 // 🕒 Start / Ende berechnen
