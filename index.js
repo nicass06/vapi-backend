@@ -29,34 +29,71 @@ function normalizeDateToNextFuture(dateInput) {
 
   let candidate;
 
-  // Fall 1: ISO-Datum (kommt oft von Vapi)
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+  // 🔹 relative Tage
+  if (dateInput === "today") {
+    candidate = new Date(today);
+  }
+  else if (dateInput === "tomorrow") {
+    candidate = new Date(today);
+    candidate.setDate(candidate.getDate() + 1);
+  }
+  else if (dateInput === "day_after_tomorrow") {
+    candidate = new Date(today);
+    candidate.setDate(candidate.getDate() + 2);
+  }
+
+  // 🔹 Wochentage
+  else if (
+    ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
+      .includes(dateInput)
+  ) {
+    const weekdayMap = {
+      sunday: 0,
+      monday: 1,
+      tuesday: 2,
+      wednesday: 3,
+      thursday: 4,
+      friday: 5,
+      saturday: 6,
+    };
+
+    const targetDay = weekdayMap[dateInput];
+    candidate = new Date(today);
+
+    const diff =
+      (targetDay + 7 - candidate.getDay()) % 7 || 7;
+
+    candidate.setDate(candidate.getDate() + diff);
+  }
+
+  // 🔹 ISO-Datum (YYYY-MM-DD)
+  else if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
     candidate = new Date(dateInput + "T00:00:00");
   }
-  // Fall 2: "5.1." oder "05.01"
+
+  // 🔹 Formate wie 5.1. oder 05.01
   else {
-    const match = dateInput.match(/^(\d{1,2})\.(\d{1,2})$/);
+    const match = dateInput.match(/^(\d{1,2})\.(\d{1,2})\.?$/);
     if (!match) {
       throw new Error("Invalid date format: " + dateInput);
     }
 
     const day = Number(match[1]);
     const month = Number(match[2]) - 1;
-    const currentYear = today.getFullYear();
 
-    candidate = new Date(currentYear, month, day);
+    candidate = new Date(today.getFullYear(), month, day);
   }
 
   candidate.setHours(0, 0, 0, 0);
 
-  // 🔥 DAS IST DER ENTSCHEIDENDE TEIL 🔥
-  // Jahr so lange erhöhen, bis Datum in der Zukunft liegt
+  // 🔥 immer nächstes zukünftiges Datum
   while (candidate < today) {
     candidate.setFullYear(candidate.getFullYear() + 1);
   }
 
   return candidate.toISOString().slice(0, 10);
 }
+
 
 
 
