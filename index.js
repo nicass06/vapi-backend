@@ -270,10 +270,11 @@ app.post("/create-reservation", async (req, res) => {
     );
 
     const phone =
-  req.body.phone ||
-  req.body.call?.from ||
-  req.body.caller?.phone?.number ||
+  req.body?.phone ||
+  req.body?.caller?.phone?.number ||
+  req.body?.call?.from ||
   "";
+
 
 
     console.log("AIRTABLE RECORD ID:", response.data.id);
