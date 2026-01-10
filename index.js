@@ -269,6 +269,13 @@ app.post("/create-reservation", async (req, res) => {
       }
     );
 
+    const phone =
+  req.body.phone ||
+  req.body.call?.from ||
+  req.body.caller?.phone?.number ||
+  "";
+
+
     console.log("AIRTABLE RECORD ID:", response.data.id);
 
     return res.json({
