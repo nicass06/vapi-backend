@@ -221,74 +221,69 @@ AND(
 ========================= */
 
 app.post("/create-reservation", async (req, res) => {
-  console.log("=== CREATE RESERVATION START ===");
-  console.log("RAW BODY:", req.body);
-
   try {
-    let { date, time_text, guests, name = "", phone = "" } = req.body;
-    guests = Number(guests);
+    console.log("=== CREATE RESERVATION START ===");
+    console.log("RAW BODY:", req.body);
+
+    const { date, time_text, guests, name = "" } = req.body;
 
     if (!date || !time_text || !guests) {
-      return res.status(400).json({ error: "Missing parameters" });
+      return res.status(400).json({ error: "Missing required fields" });
     }
 
-    const normalizedDate = normalizeDateToNextFuture(date);
-    if (!normalizedDate) {
-      return res.status(400).json({ error: "Invalid date format" });
-    }
+    const phone =
+      req.body?.phone ||
+      req.body?.caller?.phone?.number ||
+      req.body?.call?.from ||
+      "";
 
-    const { start, end } = buildStartEnd(normalizedDate, time_text);
-
+    const normalizedDate = normalizeDate(date);
     console.log("NORMALIZED DATE:", normalizedDate);
+
+    const start = new Date(`${normalizedDate}T${time_text}:00`);
+    const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+
     console.log("START:", start.toISOString());
     console.log("END:", end.toISOString());
 
-    const payload = {
+    const airtablePayload = {
       fields: {
         date: normalizedDate,
         time_text,
         guests,
         name,
         phone,
-        status: "bestätigt",
-        start_datetime: start.toISOString(),
-        end_datetime: end.toISOString(),
-      },
+        status: "bestätigt"
+        // ⚠️ start_datetime / end_datetime NICHT setzen (computed fields!)
+      }
     };
 
-    console.log("AIRTABLE PAYLOAD:", payload);
+    console.log("AIRTABLE PAYLOAD:", airtablePayload);
 
     const response = await axios.post(
       `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}`,
-      payload,
+      airtablePayload,
       {
         headers: {
           Authorization: `Bearer ${AIRTABLE_TOKEN}`,
-          "Content-Type": "application/json",
-        },
+          "Content-Type": "application/json"
+        }
       }
     );
 
-    const phone =
-  req.body?.phone ||
-  req.body?.caller?.phone?.number ||
-  req.body?.call?.from ||
-  "";
-
-
-
     console.log("AIRTABLE RECORD ID:", response.data.id);
 
-    return res.json({
+    res.json({
       success: true,
-      recordId: response.data.id,
+      recordId: response.data.id
     });
 
-  } catch (err) {
-    console.error("CREATE RESERVATION ERROR", err.response?.data || err.message);
-    return res.status(500).json({ error: "Could not create reservation" });
+  } catch (error) {
+    console.error("CREATE RESERVATION ERROR", error.response?.data || error.message);
+    res.status(500).json({ error: "Could not create reservation" });
   }
 });
+
 
 /* =========================
    CANCEL RESERVATION
@@ -299,69 +294,85 @@ app.post("/cancel-reservation", async (req, res) => {
     console.log("=== CANCEL RESERVATION START ===");
     console.log("RAW BODY:", req.body);
 
-    const { date, time_text, name, phone } = req.body;
+    const { date, time_text, name = "" } = req.body;
+
+    if (!date || !time_text) {
+      return res.status(400).json({ error: "Missing date or time" });
+    }
+
+    const phone =
+      req.body?.phone ||
+      req.body?.caller?.phone?.number ||
+      req.body?.call?.from ||
+      "";
 
     const normalizedDate = normalizeDate(date);
-    const start = new Date(`${normalizedDate}T${time_text}:00`);
-
     console.log("NORMALIZED DATE:", normalizedDate);
-    console.log("START:", start.toISOString());
 
-    const filterFormula = `
-AND(
-  {status}="bestätigt",
-  IS_SAME(
-    {start_datetime},
-    DATETIME_PARSE("${start.toISOString()}"),
-    'minute'
-  )
-)
-`;
+    const filterFormulaParts = [
+      `{status}="bestätigt"`,
+      `{date}="${normalizedDate}"`,
+      `{time_text}="${time_text}"`
+    ];
 
+    if (phone) {
+      filterFormulaParts.push(`{phone}="${phone}"`);
+    }
+
+    if (name) {
+      filterFormulaParts.push(`{name}="${name}"`);
+    }
+
+    const filterFormula = `AND(${filterFormulaParts.join(",")})`;
     console.log("FILTER FORMULA:", filterFormula);
 
-    const search = await axios.get(
+    const searchResponse = await axios.get(
       `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}`,
       {
         headers: {
-          Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+          Authorization: `Bearer ${AIRTABLE_TOKEN}`
         },
         params: {
-          filterByFormula: filterFormula,
-        },
+          filterByFormula: filterFormula
+        }
       }
     );
 
-    if (search.data.records.length === 0) {
-      return res.status(404).json({
+    if (searchResponse.data.records.length === 0) {
+      return res.json({
         success: false,
-        message: "Keine passende Reservierung gefunden",
+        message: "Keine passende Reservierung gefunden"
       });
     }
 
-    const recordId = search.data.records[0].id;
+    const recordId = searchResponse.data.records[0].id;
 
     await axios.patch(
       `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AIRTABLE_TABLE}/${recordId}`,
       {
         fields: {
-          status: "storniert",
-        },
+          status: "storniert"
+        }
       },
       {
         headers: {
           Authorization: `Bearer ${AIRTABLE_TOKEN}`,
-          "Content-Type": "application/json",
-        },
+          "Content-Type": "application/json"
+        }
       }
     );
 
-    res.json({ success: true });
+    res.json({
+      success: true,
+      message: "Reservierung wurde storniert"
+    });
+
   } catch (error) {
-    console.error("CANCEL RESERVATION ERROR", error.response?.data || error);
+    console.error("CANCEL RESERVATION ERROR", error.response?.data || error.message);
     res.status(500).json({ error: "Could not cancel reservation" });
   }
 });
+
 
 
 
