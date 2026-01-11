@@ -130,8 +130,12 @@ app.post("/check-availability", async (req, res) => {
     const [h, m] = time_text.split(":").map(Number);
     const requestMinutes = h * 60 + m;
 
-    const [oh, om] = opening.open.split(":").map(Number);
-    const [ch, cm] = opening.close.split(":").map(Number);
+    const openStr = String(opening.open);
+const closeStr = String(opening.close);
+
+const [oh, om] = openStr.split(":").map(Number);
+const [ch, cm] = closeStr.split(":").map(Number);
+
     const openMinutes = oh * 60 + om;
     const closeMinutes = ch * 60 + cm;
 
