@@ -142,18 +142,11 @@ app.post("/check-availability", async (req, res) => {
     const [h, m] = time_text.split(":").map(Number);
     const requestMinutes = h * 60 + m;
 
-    const openStr = String(opening.open);
-const closeStr = String(opening.close);
+    const openDate = new Date(opening.open);
+const closeDate = new Date(opening.close);
 
-const [oh, om] = openStr.split(":").map(Number);
-const [ch, cm] = closeStr.split(":").map(Number);
-
-const openMinutes = oh * 60 + om;
-const closeMinutes = ch * 60 + cm;
-
-
-    const openMinutes = oh * 60 + om;
-    const closeMinutes = ch * 60 + cm;
+const openMinutes = openDate.getHours() * 60 + openDate.getMinutes();
+const closeMinutes = closeDate.getHours() * 60 + closeDate.getMinutes();
 
     if (requestMinutes < openMinutes || requestMinutes + SLOT_DURATION_MIN > closeMinutes) {
       return res.json({
