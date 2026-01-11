@@ -240,10 +240,14 @@ app.post("/create-reservation", async (req, res) => {
 
     return res.json({ success: true });
 
-  } catch (err) {
-    console.error("CREATE ERROR:", err.message);
-    return res.json({ success: false, reason: "technical_error" });
-  }
+  } catch (error) {
+  console.error("CREATE ERROR FULL:", error.response?.data || error.message || error);
+  res.status(500).json({
+    error: "Create reservation failed",
+    details: error.response?.data || error.message || String(error)
+  });
+}
+
 });
 
 app.post("/cancel-reservation", async (req, res) => {
