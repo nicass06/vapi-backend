@@ -206,7 +206,7 @@ app.post("/create-reservation", async (req, res) => {
 
     // Reuse availability check logic
     const availability = await axios.post(
-      "http://localhost:3000/check-availability",
+      "https://vapi-backend-f2ex.onrender.com/check-availability",
       { date, time_text, guests }
     );
 
