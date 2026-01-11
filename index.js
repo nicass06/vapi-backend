@@ -241,12 +241,25 @@ app.post("/create-reservation", async (req, res) => {
     return res.json({ success: true });
 
   } catch (error) {
-  console.error("CREATE ERROR FULL:", error.response?.data || error.message || error);
+  console.error("========== CREATE RESERVATION ERROR ==========");
+  console.error("Message:", error.message);
+  console.error("Stack:", error.stack);
+  if (error.response) {
+    console.error("Status:", error.response.status);
+    console.error("Data:", JSON.stringify(error.response.data, null, 2));
+    console.error("Headers:", error.response.headers);
+  } else {
+    console.error("No response object:", error);
+  }
+  console.error("============================================");
+
   res.status(500).json({
     error: "Create reservation failed",
-    details: error.response?.data || error.message || String(error)
+    message: error.message,
+    airtable: error.response?.data || null
   });
 }
+
 
 });
 
