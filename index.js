@@ -62,6 +62,18 @@ function normalizeDate(dateInput) {
   return candidate.toISOString().slice(0, 10);
 }
 
+function isWithinOpeningHours(dateObj, opening) {
+  const open = new Date(opening.open_time);
+  const close = new Date(opening.close_time);
+
+  const minutes = dateObj.getHours() * 60 + dateObj.getMinutes();
+  const openMinutes = open.getHours() * 60 + open.getMinutes();
+  const closeMinutes = close.getHours() * 60 + close.getMinutes();
+
+  return minutes >= openMinutes && minutes < closeMinutes;
+}
+
+
 // ============================
 // OPENING HOURS
 // ============================
@@ -135,6 +147,10 @@ const closeStr = String(opening.close);
 
 const [oh, om] = openStr.split(":").map(Number);
 const [ch, cm] = closeStr.split(":").map(Number);
+
+const openMinutes = oh * 60 + om;
+const closeMinutes = ch * 60 + cm;
+
 
     const openMinutes = oh * 60 + om;
     const closeMinutes = ch * 60 + cm;
