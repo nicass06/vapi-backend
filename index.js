@@ -62,16 +62,19 @@ function normalizeDate(dateInput) {
   return candidate.toISOString().slice(0, 10);
 }
 
-function isWithinOpeningHours(dateObj, opening) {
-  const open = new Date(opening.open_time);
-  const close = new Date(opening.close_time);
+function isWithinOpeningHours(timeText, opening) {
+  const [h, m] = timeText.split(":").map(Number);
+  const requestMinutes = h * 60 + m;
 
-  const minutes = dateObj.getHours() * 60 + dateObj.getMinutes();
-  const openMinutes = open.getHours() * 60 + open.getMinutes();
-  const closeMinutes = close.getHours() * 60 + close.getMinutes();
+  const [oh, om] = String(opening.open).split(":").map(Number);
+  const [ch, cm] = String(opening.close).split(":").map(Number);
 
-  return minutes >= openMinutes && minutes < closeMinutes;
+  const openMinutes = oh * 60 + om;
+  const closeMinutes = ch * 60 + cm;
+
+  return requestMinutes >= openMinutes && requestMinutes + SLOT_DURATION_MIN <= closeMinutes;
 }
+
 
 
 // ============================
@@ -142,13 +145,13 @@ app.post("/check-availability", async (req, res) => {
     const [h, m] = time_text.split(":").map(Number);
     const requestMinutes = h * 60 + m;
 
-    const openDate = new Date(opening.open);
-const closeDate = new Date(opening.close);
+    const [oh, om] = String(opening.open).split(":").map(Number);
+    const [ch, cm] = String(opening.close).split(":").map(Number);
 
-const openMinutes = openDate.getHours() * 60 + openDate.getMinutes();
-const closeMinutes = closeDate.getHours() * 60 + closeDate.getMinutes();
+    const openMinutes = oh * 60 + om;
+    const closeMinutes = ch * 60 + cm;
 
-    if (requestMinutes < openMinutes || requestMinutes >= closeMinutes) {
+    if (requestMinutes < openMinutes || requestMinutes + SLOT_DURATION_MIN > closeMinutes) {
       return res.json({
         success: false,
         reason: "outside_opening_hours",
@@ -156,7 +159,10 @@ const closeMinutes = closeDate.getHours() * 60 + closeDate.getMinutes();
       });
     }
 
-    // Overlap & capacity
+    // Ab hier kommt deine bestehende Overlap- & Kapazitätslogik
+    // (Airtable Query, overlapping guests, available true/false etc.)
+	
+	// Overlap & capacity
     const startISO = `${normalizedDate}T${time_text}:00.000Z`;
     const endDate = new Date(new Date(startISO).getTime() + SLOT_DURATION_MIN * 60000).toISOString();
 
@@ -196,10 +202,11 @@ const closeMinutes = closeDate.getHours() * 60 + closeDate.getMinutes();
     });
 
   } catch (err) {
-    console.error("CHECK AVAILABILITY ERROR:", err.message);
-    return res.json({ success: false, reason: "technical_error" });
+    console.error("CHECK AVAILABILITY ERROR", err);
+    res.status(500).json({ success: false, reason: "server_error" });
   }
 });
+
 
 app.post("/create-reservation", async (req, res) => {
   try {
