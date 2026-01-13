@@ -148,7 +148,7 @@ const closeDate = new Date(opening.close);
 const openMinutes = openDate.getHours() * 60 + openDate.getMinutes();
 const closeMinutes = closeDate.getHours() * 60 + closeDate.getMinutes();
 
-    if (requestMinutes < openMinutes || requestMinutes + SLOT_DURATION_MIN > closeMinutes) {
+    if (requestMinutes < openMinutes || requestMinutes >= closeMinutes) {
       return res.json({
         success: false,
         reason: "outside_opening_hours",
