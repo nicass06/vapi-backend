@@ -11,6 +11,13 @@ function extractPhone(req) {
   );
 }
 
+function minutesToTime(mins) {
+  const h = Math.floor(mins / 60).toString().padStart(2, "0");
+  const m = (mins % 60).toString().padStart(2, "0");
+  return `${h}:${m}`;
+}
+
+
 
 const app = express();
 app.use(cors());
@@ -169,7 +176,9 @@ app.post("/check-availability", async (req, res) => {
     const openMinutes = oh * 60 + om;
     const closeMinutes = ch * 60 + cm;
 
-    if (requestMinutes < openMinutes || requestMinutes + SLOT_DURATION_MIN > closeMinutes) {
+    const lastPossibleStart = closeMinutes - SLOT_DURATION_MIN;
+
+    if (requestMinutes < openMinutes || requestMinutes > lastPossibleStart) {
   return res.json({
     success: false,
     reason: "outside_opening_hours",
