@@ -303,7 +303,7 @@ app.post("/cancel-reservation", async (req, res) => {
       `{status}="bestätigt"`,
       `{date}="${normalizedDate}"`,
       `{time_text}="${time_text}"`,
-      `{phone}="${phone}"
+      `{phone}="${phone}"`
     ];
     if (phone) formulaParts.push(`{phone}="${phone}"`);
 
