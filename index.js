@@ -2,6 +2,16 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 
+function extractPhone(req) {
+  return (
+    req.body?.phone ||
+    req.body?.call?.from ||
+    req.body?.caller?.phone?.number ||
+    ""
+  );
+}
+
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -215,10 +225,8 @@ app.post("/create-reservation", async (req, res) => {
       return res.json({ success: false, reason: "missing_parameters" });
     }
 
-    const phone =
-      typeof req.body.phone === "string" && req.body.phone.trim() !== ""
-        ? req.body.phone.trim()
-        : "";
+    const phone = extractPhone(req);
+
 
     // Reuse availability check logic
     const availability = await axios.post(
@@ -240,6 +248,8 @@ app.post("/create-reservation", async (req, res) => {
         name,
         phone,
         status: "bestätigt"
+	start_datetime: startISO,
+	end_datetime: endISO
       }
     };
 
@@ -284,17 +294,16 @@ app.post("/cancel-reservation", async (req, res) => {
     const { date, time_text } = req.body;
     if (!date || !time_text) return res.json({ success: false });
 
-    const phone =
-      typeof req.body.phone === "string" && req.body.phone.trim() !== ""
-        ? req.body.phone.trim()
-        : "";
+    const phone = extractPhone(req);
+
 
     const normalizedDate = normalizeDate(date);
 
     const formulaParts = [
       `{status}="bestätigt"`,
       `{date}="${normalizedDate}"`,
-      `{time_text}="${time_text}"`
+      `{time_text}="${time_text}"`,
+      `{phone}="${phone}"
     ];
     if (phone) formulaParts.push(`{phone}="${phone}"`);
 
