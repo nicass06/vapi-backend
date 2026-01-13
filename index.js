@@ -246,7 +246,7 @@ app.post("/create-reservation", async (req, res) => {
         time_text,
         guests,
         name,
-        phone,
+        phone: phone,
         status: "bestätigt",
 	
       }
