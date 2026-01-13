@@ -36,15 +36,16 @@ const SLOT_DURATION_MIN = 120;
 // ============================
 function normalizeDate(dateInput) {
   if (!dateInput || typeof dateInput !== "string") {
-    throw new Error("Invalid date format");
+    throw new Error("Invalid date input");
   }
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   let candidate;
 
-  if (dateInput === "today") candidate = new Date(today);
-  else if (dateInput === "tomorrow") {
+  if (dateInput === "today") {
+    candidate = new Date(today);
+  } else if (dateInput === "tomorrow") {
     candidate = new Date(today);
     candidate.setDate(candidate.getDate() + 1);
   } else if (dateInput === "day_after_tomorrow") {
@@ -52,8 +53,8 @@ function normalizeDate(dateInput) {
     candidate.setDate(candidate.getDate() + 2);
   } else if (["monday","tuesday","wednesday","thursday","friday","saturday","sunday"].includes(dateInput)) {
     const map = { sunday:0, monday:1, tuesday:2, wednesday:3, thursday:4, friday:5, saturday:6 };
+    const diff = (map[dateInput] + 7 - today.getDay()) % 7 || 7;
     candidate = new Date(today);
-    const diff = (map[dateInput] + 7 - candidate.getDay()) % 7 || 7;
     candidate.setDate(candidate.getDate() + diff);
   } else if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
     candidate = new Date(dateInput + "T00:00:00");
@@ -63,14 +64,19 @@ function normalizeDate(dateInput) {
     const month = parseInt(parts[1], 10) - 1;
     candidate = new Date(today.getFullYear(), month, day);
   } else {
-    throw new Error("Invalid date format");
+    throw new Error("Unrecognized date format: " + dateInput);
   }
 
   candidate.setHours(0, 0, 0, 0);
-  while (candidate < today) candidate.setFullYear(candidate.getFullYear() + 1);
+
+  // nächstes zukünftiges Jahr erzwingen
+  while (candidate < today) {
+    candidate.setFullYear(candidate.getFullYear() + 1);
+  }
 
   return candidate.toISOString().slice(0, 10);
 }
+
 
 function isWithinOpeningHours(timeText, opening) {
   const [h, m] = timeText.split(":").map(Number);
