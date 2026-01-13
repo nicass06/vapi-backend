@@ -58,12 +58,14 @@ function normalizeDate(dateInput) {
     candidate.setDate(candidate.getDate() + diff);
   } else if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
     candidate = new Date(dateInput + "T00:00:00");
-  } else if (/^\d{1,2}\.\d{1,2}\.?$/.test(dateInput)) {
-    const parts = dateInput.replace(".", "").split(".");
-    const day = parseInt(parts[0], 10);
-    const month = parseInt(parts[1], 10) - 1;
-    candidate = new Date(today.getFullYear(), month, day);
-  } else {
+  } else if (/^\d{1,2}\.\d{1,2}(\.\d{4})?$/.test(dateInput)) {
+  const parts = dateInput.split(".");
+  const day = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const year = parts[2] ? parseInt(parts[2], 10) : today.getFullYear();
+  candidate = new Date(year, month, day);
+}
+ else {
     throw new Error("Unrecognized date format: " + dateInput);
   }
 
@@ -82,11 +84,11 @@ function isWithinOpeningHours(timeText, opening) {
   const [h, m] = timeText.split(":").map(Number);
   const requestMinutes = h * 60 + m;
 
-  const [oh, om] = String(opening.open).split(":").map(Number);
-  const [ch, cm] = String(opening.close).split(":").map(Number);
+  const [oh, om] = opening.open.split(":").map(Number);
+const [ch, cm] = opening.close.split(":").map(Number);
 
-  const openMinutes = oh * 60 + om;
-  const closeMinutes = ch * 60 + cm;
+const openMinutes = oh * 60 + om;
+const closeMinutes = ch * 60 + cm;
 
   return requestMinutes >= openMinutes && requestMinutes + SLOT_DURATION_MIN <= closeMinutes;
 }
@@ -168,12 +170,13 @@ app.post("/check-availability", async (req, res) => {
     const closeMinutes = ch * 60 + cm;
 
     if (requestMinutes < openMinutes || requestMinutes + SLOT_DURATION_MIN > closeMinutes) {
-      return res.json({
-        success: false,
-        reason: "outside_opening_hours",
-        message: `Wir sind von ${opening.open} bis ${opening.close} geöffnet.`
-      });
-    }
+  return res.json({
+    success: false,
+    reason: "outside_opening_hours",
+    message: `Wir sind von ${opening.open} bis ${opening.close} geöffnet.`
+  });
+}
+
 
     // Ab hier kommt deine bestehende Overlap- & Kapazitätslogik
     // (Airtable Query, overlapping guests, available true/false etc.)
