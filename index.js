@@ -178,7 +178,7 @@ app.post("/check-availability", async (req, res) => {
 
     const lastPossibleStart = closeMinutes - SLOT_DURATION_MIN;
 
-    if (requestMinutes < openMinutes || requestMinutes > lastPossibleStart) {
+    if (requestMinutes < openMinutes || requestMinutes >= lastPossibleStart) {
   return res.json({
     success: false,
     reason: "outside_opening_hours",
