@@ -244,6 +244,8 @@ app.post("/create-reservation", async (req, res) => {
     }
 
     const phone = extractPhone(req);
+    
+   
 
 
     // Reuse availability check logic
@@ -258,6 +260,9 @@ app.post("/create-reservation", async (req, res) => {
 
     const normalizedDate = normalizeDate(date);
 
+    const startISO = `${normalizedDate}T${time_text}:00.000Z`;
+    const endISO = new Date(new Date(startISO).getTime() + SLOT_DURATION_MIN * 60000).toISOString();
+
     const payload = {
       fields: {
         date: normalizedDate,
@@ -266,6 +271,8 @@ app.post("/create-reservation", async (req, res) => {
         name,
         phone: phone,
         status: "bestätigt",
+        start_datetime: startISO,
+        end_datetime: endISO
 	
       }
     };
