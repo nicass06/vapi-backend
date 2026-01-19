@@ -156,11 +156,9 @@ app.post("/check-availability", async (req, res) => {
       return res.json({ success: false, reason: "missing_parameters" });
     }
 
-    // Datum normalisieren (today, morgen, 5.1., etc.)
     const normalizedDate = normalizeDate(date);
-
-    // Öffnungszeiten holen
     const opening = await getOpeningForDate(normalizedDate);
+
     if (opening.closed) {
       return res.json({
         success: false,
@@ -169,78 +167,75 @@ app.post("/check-availability", async (req, res) => {
       });
     }
 
-    // Zeit in Minuten umrechnen
     const [h, m] = time_text.split(":").map(Number);
     const requestMinutes = h * 60 + m;
 
-    const [oh, om] = String(opening.open).split(":").map(Number);
-    const [ch, cm] = String(opening.close).split(":").map(Number);
+    const openDate = new Date(opening.open);
+const closeDate = new Date(opening.close);
 
-    const openMinutes = oh * 60 + om;
-    const closeMinutes = ch * 60 + cm;
+const openMinutes = openDate.getUTCHours() * 60 + openDate.getUTCMinutes();
+const closeMinutes = closeDate.getUTCHours() * 60 + closeDate.getUTCMinutes();
 
-    // Letzter erlaubter Start (Schließzeit - Slotdauer)
+
     const lastPossibleStart = closeMinutes - SLOT_DURATION_MIN;
 
-    if (requestMinutes < openMinutes || requestMinutes > lastPossibleStart) {
-      return res.json({
-        success: false,
-        reason: "outside_opening_hours",
-        message: `Wir sind von ${opening.open} bis ${opening.close} geöffnet. Letzte Reservierung um ${String(Math.floor(lastPossibleStart/60)).padStart(2,"0")}:${String(lastPossibleStart%60).padStart(2,"0")}.`
-      });
-    }
+if (requestMinutes < openMinutes || requestMinutes > lastPossibleStart) {
+  return res.json({
+    success: false,
+    reason: "outside_opening_hours",
+    message: `Letzte Reservierung ist um ${String(Math.floor(lastPossibleStart/60)).padStart(2,"0")}:${String(lastPossibleStart%60).padStart(2,"0")} Uhr möglich.`
+  });
+}
 
-    // Start- & Endzeit für Overlap-Berechnung
+
+
+    // Ab hier kommt deine bestehende Overlap- & Kapazitätslogik
+    // (Airtable Query, overlapping guests, available true/false etc.)
+	
+	// Overlap & capacity
     const startISO = `${normalizedDate}T${time_text}:00.000Z`;
-    const endISO = new Date(
-      new Date(startISO).getTime() + SLOT_DURATION_MIN * 60000
-    ).toISOString();
+    const endDate = new Date(new Date(startISO).getTime() + SLOT_DURATION_MIN * 60000).toISOString();
 
-    console.log("CHECK AVAILABILITY");
-    console.log("START:", startISO);
-    console.log("END:", endISO);
-
-    // Overlapping Reservierungen aus Airtable holen
-    const response = await axios.get(
+    const records = await axios.get(
       `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`,
       {
         headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
         params: {
-          filterByFormula: `
-AND(
-  {status}="bestätigt",
-  {start_datetime} < DATETIME_PARSE("${endISO}"),
-  {end_datetime} > DATETIME_PARSE("${startISO}")
-)
-`
+          filterByFormula: `AND({status}="bestätigt",{date}="${normalizedDate}")`
         }
       }
     );
 
-    let overlappingGuests = 0;
-    for (const r of response.data.records) {
-      overlappingGuests += r.fields.guests || 0;
+    let totalGuests = 0;
+
+    records.data.records.forEach(r => {
+      const s = r.fields.start_datetime;
+      const e = r.fields.end_datetime;
+      if (s && e && !(endDate <= s || startISO >= e)) {
+        totalGuests += r.fields.guests || 0;
+      }
+    });
+
+    if (totalGuests + guests > MAX_CAPACITY) {
+      return res.json({
+        success: false,
+        reason: "full",
+        available: false,
+        total_guests: totalGuests
+      });
     }
-
-    const available = overlappingGuests + guests <= MAX_CAPACITY;
-
-    console.log("OVERLAPPING GUESTS:", overlappingGuests);
-    console.log("REQUESTED:", guests);
-    console.log("AVAILABLE:", available);
 
     return res.json({
       success: true,
-      available,
-      overlappingGuests,
-      requestedGuests: guests
+      available: true,
+      total_guests: totalGuests
     });
 
   } catch (err) {
-    console.error("CHECK AVAILABILITY ERROR:", err);
-    return res.status(500).json({ success: false, error: "server_error" });
+    console.error("CHECK AVAILABILITY ERROR", err);
+    res.status(500).json({ success: false, reason: "server_error" });
   }
 });
-
 
 
 app.post("/create-reservation", async (req, res) => {
