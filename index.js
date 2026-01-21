@@ -60,17 +60,25 @@ function normalizeDate(dateInput) {
     return candidate.toISOString().slice(0, 10);
 }
 
-// VERBESSERTE FUNKTION: Verhindert den .split() Fehler
-function timeToMinutes(timeStr) {
-    if (!timeStr || typeof timeStr !== 'string') {
-        console.error("Ungültiger timeStr empfangen:", timeStr);
-        return 0; 
+/**
+ * VERBESSERTE FUNKTION: Verarbeitet "17:00" (String) UND 61200 (Sekunden aus Airtable)
+ */
+function timeToMinutes(timeVal) {
+    if (timeVal === undefined || timeVal === null) return 0;
+
+    // Fall 1: Airtable liefert Sekunden als Zahl (z.B. 61200)
+    if (typeof timeVal === 'number') {
+        return Math.floor(timeVal / 60);
     }
-    const parts = timeStr.split(":");
-    if (parts.length < 2) return 0;
-    const h = parseInt(parts[0], 10);
-    const m = parseInt(parts[1], 10);
-    return h * 60 + m;
+
+    // Fall 2: Vapi/Airtable liefert String (z.B. "17:00")
+    if (typeof timeVal === 'string') {
+        const parts = timeVal.split(":");
+        if (parts.length < 2) return 0;
+        return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+    }
+
+    return 0;
 }
 
 async function getOpeningForDate(dateISO) {
@@ -98,7 +106,6 @@ async function getOpeningForDate(dateISO) {
         const fields = hoursRes.data.records[0].fields;
         return { closed: false, open: fields.open_time, close: fields.close_time };
     } catch (e) {
-        console.error("Airtable Fehler (Opening):", e.message);
         return { closed: true, reason: "Fehler bei Abfrage" };
     }
 }
@@ -110,29 +117,19 @@ async function getOpeningForDate(dateISO) {
 app.post("/check-availability", async (req, res) => {
     try {
         const { date, time_text, guests } = req.body;
-        
-        // Validierung der Eingabe
-        if (!date || !time_text) {
-            return res.json({ success: false, available: false, message: "Bitte Datum und Uhrzeit nennen." });
-        }
+        if (!date || !time_text) return res.json({ success: false, available: false, message: "Daten unvollständig." });
 
         const normalizedDate = normalizeDate(date);
         const opening = await getOpeningForDate(normalizedDate);
 
-        if (opening.closed) {
-            return res.json({ success: false, available: false, message: `Am ${normalizedDate} haben wir geschlossen.` });
-        }
+        if (opening.closed) return res.json({ success: false, available: false, message: "Wir haben geschlossen." });
 
         const reqMin = timeToMinutes(time_text);
         const openMin = timeToMinutes(opening.open);
         const closeMin = timeToMinutes(opening.close);
 
         if (reqMin < openMin || (reqMin + SLOT_DURATION_MIN) > closeMin) {
-            return res.json({ 
-                success: false, 
-                available: false, 
-                message: `Wir haben dann leider zu. Geöffnet: ${opening.open}-${opening.close}` 
-            });
+            return res.json({ success: false, available: false, message: "Außerhalb der Öffnungszeiten." });
         }
 
         const resRecords = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
@@ -141,13 +138,10 @@ app.post("/check-availability", async (req, res) => {
         });
 
         let currentLoad = 0;
-        const newStart = reqMin;
-        const newEnd = reqMin + SLOT_DURATION_MIN;
-
         resRecords.data.records.forEach(record => {
             const existingStart = timeToMinutes(record.fields.time_text);
             const existingEnd = existingStart + SLOT_DURATION_MIN;
-            if (newStart < existingEnd && newEnd > existingStart) {
+            if (reqMin < existingEnd && (reqMin + SLOT_DURATION_MIN) > existingStart) {
                 currentLoad += (record.fields.guests || 0);
             }
         });
@@ -158,7 +152,6 @@ app.post("/check-availability", async (req, res) => {
 
         return res.json({ success: true, available: true });
     } catch (err) {
-        console.error("Check Error:", err.message);
         res.json({ success: false, available: false, error: err.message });
     }
 });
@@ -166,11 +159,6 @@ app.post("/check-availability", async (req, res) => {
 app.post("/create-reservation", async (req, res) => {
     try {
         const { date, time_text, guests, name } = req.body;
-        
-        if (!date || !time_text) {
-             return res.json({ success: false, error: "Fehlende Daten für Reservierung" });
-        }
-
         const phone = extractPhone(req);
         const normalizedDate = normalizeDate(date);
         const startISO = `${normalizedDate}T${time_text}:00.000Z`;
@@ -178,7 +166,7 @@ app.post("/create-reservation", async (req, res) => {
         await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             fields: {
                 date: normalizedDate,
-                time_text: String(time_text), // Sicherstellen, dass es ein String ist
+                time_text: String(time_text),
                 guests: parseInt(guests || 1),
                 name: name || "Gast",
                 phone: String(phone),
@@ -191,7 +179,6 @@ app.post("/create-reservation", async (req, res) => {
 
         return res.json({ success: true });
     } catch (err) {
-        console.error("Create Error:", err.response?.data || err.message);
         res.json({ success: false, error: err.message });
     }
 });
@@ -204,14 +191,10 @@ app.post("/cancel-reservation", async (req, res) => {
 
         const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { 
-                filterByFormula: `AND({phone}="${phone}", {date}="${normalizedDate}", {status}="bestätigt")` 
-            }
+            params: { filterByFormula: `AND({phone}="${phone}", {date}="${normalizedDate}", {status}="bestätigt")` }
         });
 
-        if (search.data.records.length === 0) {
-            return res.json({ success: false, reason: "not_found" });
-        }
+        if (search.data.records.length === 0) return res.json({ success: false, reason: "not_found" });
 
         await axios.patch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}/${search.data.records[0].id}`, 
             { fields: { status: "storniert" } },
