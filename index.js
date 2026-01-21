@@ -159,14 +159,30 @@ app.post("/check-availability", async (req, res) => {
 app.post("/create-reservation", async (req, res) => {
     try {
         const { date, time_text, guests, name } = req.body;
-        const phone = extractPhone(req);
         const normalizedDate = normalizeDate(date);
+        const reqMin = timeToMinutes(time_text);
+        const numGuests = parseInt(guests || 1);
 
-        // Berechnung von Start und Ende für Airtable
-        const startMin = timeToMinutes(time_text);
-        const endMin = startMin + SLOT_DURATION_MIN;
+        // 1. SICHERHEITS-CHECK: Nochmal Kapazität prüfen vor dem Schreiben
+        const resRecords = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
+            headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
+            params: { filterByFormula: `AND({status}="bestätigt", {date}="${normalizedDate}")` }
+        });
 
-        // Hilfsfunktion um Minuten zurück in HH:mm zu verwandeln
+        let currentLoad = 0;
+        resRecords.data.records.forEach(record => {
+            const existingStart = timeToMinutes(record.fields.time_text);
+            const existingEnd = existingStart + SLOT_DURATION_MIN;
+            if (reqMin < existingEnd && (reqMin + SLOT_DURATION_MIN) > existingStart) {
+                currentLoad += (parseInt(record.fields.guests) || 0);
+            }
+        });
+
+        if (currentLoad + numGuests > MAX_CAPACITY) {
+            return res.json({ success: false, error: "Kapazität während der Buchung überschritten." });
+        }
+
+        // 2. RESERVIERUNG SCHREIBEN (inkl. end_datetime)
         const toHHMM = (min) => {
             const h = Math.floor(min / 60).toString().padStart(2, '0');
             const m = (min % 60).toString().padStart(2, '0');
@@ -174,18 +190,18 @@ app.post("/create-reservation", async (req, res) => {
         };
 
         const startISO = `${normalizedDate}T${time_text}:00.000Z`;
-        const endISO = `${normalizedDate}T${toHHMM(endMin)}:00.000Z`;
-        
+        const endISO = `${normalizedDate}T${toHHMM(reqMin + SLOT_DURATION_MIN)}:00.000Z`;
+
         await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             fields: {
                 date: normalizedDate,
                 time_text: String(time_text),
-                guests: parseInt(guests || 1),
+                guests: numGuests,
                 name: name || "Gast",
-                phone: String(phone),
+                phone: String(extractPhone(req)),
                 status: "bestätigt",
                 start_datetime: startISO,
-                end_datetime: endISO // JETZT WIRD DAS FELD GEFÜLLT
+                end_datetime: endISO
             }
         }, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}`, "Content-Type": "application/json" }
