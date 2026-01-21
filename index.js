@@ -161,7 +161,20 @@ app.post("/create-reservation", async (req, res) => {
         const { date, time_text, guests, name } = req.body;
         const phone = extractPhone(req);
         const normalizedDate = normalizeDate(date);
+
+        // Berechnung von Start und Ende für Airtable
+        const startMin = timeToMinutes(time_text);
+        const endMin = startMin + SLOT_DURATION_MIN;
+
+        // Hilfsfunktion um Minuten zurück in HH:mm zu verwandeln
+        const toHHMM = (min) => {
+            const h = Math.floor(min / 60).toString().padStart(2, '0');
+            const m = (min % 60).toString().padStart(2, '0');
+            return `${h}:${m}`;
+        };
+
         const startISO = `${normalizedDate}T${time_text}:00.000Z`;
+        const endISO = `${normalizedDate}T${toHHMM(endMin)}:00.000Z`;
         
         await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             fields: {
@@ -171,7 +184,8 @@ app.post("/create-reservation", async (req, res) => {
                 name: name || "Gast",
                 phone: String(phone),
                 status: "bestätigt",
-                start_datetime: startISO
+                start_datetime: startISO,
+                end_datetime: endISO // JETZT WIRD DAS FELD GEFÜLLT
             }
         }, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}`, "Content-Type": "application/json" }
@@ -179,6 +193,7 @@ app.post("/create-reservation", async (req, res) => {
 
         return res.json({ success: true });
     } catch (err) {
+        console.error("Create Error:", err.message);
         res.json({ success: false, error: err.message });
     }
 });
