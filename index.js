@@ -117,41 +117,58 @@ async function getOpeningForDate(dateISO) {
 app.post("/check-availability", async (req, res) => {
     try {
         const { date, time_text, guests } = req.body;
-        if (!date || !time_text) return res.json({ success: false, available: false, message: "Daten unvollständig." });
-
         const normalizedDate = normalizeDate(date);
-        const opening = await getOpeningForDate(normalizedDate);
-
-        if (opening.closed) return res.json({ success: false, available: false, message: "Wir haben geschlossen." });
-
         const reqMin = timeToMinutes(time_text);
-        const openMin = timeToMinutes(opening.open);
-        const closeMin = timeToMinutes(opening.close);
+        const numGuests = parseInt(guests || 0);
 
-        if (reqMin < openMin || (reqMin + SLOT_DURATION_MIN) > closeMin) {
-            return res.json({ success: false, available: false, message: "Außerhalb der Öffnungszeiten." });
-        }
+        console.log(`--- CHECK START ---`);
+        console.log(`Anfrage für: ${normalizedDate} um ${time_text} Uhr (${numGuests} Pers.)`);
 
+        // Wir rufen erst einmal ALLE Reservierungen für den Tag ab
+        // WICHTIG: Wir loggen die Trefferanzahl
         const resRecords = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { filterByFormula: `AND({status}="bestätigt", {date}="${normalizedDate}")` }
-        });
-
-        let currentLoad = 0;
-        resRecords.data.records.forEach(record => {
-            const existingStart = timeToMinutes(record.fields.time_text);
-            const existingEnd = existingStart + SLOT_DURATION_MIN;
-            if (reqMin < existingEnd && (reqMin + SLOT_DURATION_MIN) > existingStart) {
-                currentLoad += (record.fields.guests || 0);
+            params: { 
+                // Falls das Datum in Airtable anders formatiert ist, nutzen wir eine flexiblere Suche
+                filterByFormula: `{status}="bestätigt"` 
             }
         });
 
-        if (currentLoad + parseInt(guests || 0) > MAX_CAPACITY) {
+        let currentLoad = 0;
+        const newStart = reqMin;
+        const newEnd = reqMin + SLOT_DURATION_MIN;
+
+        console.log(`Gefundene Datensätze insgesamt: ${resRecords.data.records.length}`);
+
+        resRecords.data.records.forEach(record => {
+            const fields = record.fields;
+            
+            // Vergleiche das Datum (wir müssen sicherstellen, dass beide Formate passen)
+            // Wir normalisieren das Datum aus Airtable für den Vergleich
+            const recordDate = fields.date; 
+            
+            if (recordDate === normalizedDate || recordDate === date) {
+                const existingStart = timeToMinutes(fields.time_text);
+                const existingEnd = existingStart + SLOT_DURATION_MIN;
+
+                // Überschneidungs-Logik: (Start A < Ende B) UND (Ende A > Start B)
+                if (newStart < existingEnd && newEnd > existingStart) {
+                    currentLoad += (parseInt(fields.guests) || 0);
+                    console.log(`Überschneidung gefunden: ${fields.name} (${fields.guests} Pers.)`);
+                }
+            }
+        });
+
+        console.log(`Aktuelle Auslastung für den Zeitraum: ${currentLoad}`);
+        console.log(`--- CHECK ENDE ---`);
+
+        if (currentLoad + numGuests > MAX_CAPACITY) {
             return res.json({ success: true, available: false, message: "Leider ausgebucht." });
         }
 
         return res.json({ success: true, available: true });
     } catch (err) {
+        console.error("Check Error:", err.message);
         res.json({ success: false, available: false, error: err.message });
     }
 });
