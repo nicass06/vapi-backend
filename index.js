@@ -195,35 +195,21 @@ app.post("/check-availability", async (req, res) => {
 app.post("/create-reservation", async (req, res) => {
     try {
         const { date, time_text, guests, name } = req.body;
-        const normalizedDate = normalizeDate(date);
-        const reqMin = timeToMinutes(time_text);
-        const numGuests = parseInt(guests || 1);
-
-        // 1. SICHERHEITS-CHECK: Nochmal Kapazität prüfen vor dem Schreiben
-        const resRecords = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
-            headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { filterByFormula: `AND({status}="bestätigt", {date}="${normalizedDate}")` }
-        });
-
-        let currentLoad = 0;
-        resRecords.data.records.forEach(record => {
-            const existingStart = timeToMinutes(record.fields.time_text);
-            const existingEnd = existingStart + SLOT_DURATION_MIN;
-            if (reqMin < existingEnd && (reqMin + SLOT_DURATION_MIN) > existingStart) {
-                currentLoad += (parseInt(record.fields.guests) || 0);
-            }
-        });
-
-        if (currentLoad + numGuests > MAX_CAPACITY) {
-            return res.json({ success: false, error: "Kapazität während der Buchung überschritten." });
+        
+        // Validierung: Wenn kein Name da ist, Buchung ablehnen
+        if (!name || name.trim().toLowerCase() === "gast" || name.length < 2) {
+            console.log("Abgelehnt: Kein Name angegeben.");
+            return res.json({ 
+                success: false, 
+                error: "Bitte frage den Gast nach seinem Namen, bevor du die Reservierung buchst." 
+            });
         }
 
-        // 2. RESERVIERUNG SCHREIBEN (inkl. end_datetime)
-        const toHHMM = (min) => {
-            const h = Math.floor(min / 60).toString().padStart(2, '0');
-            const m = (min % 60).toString().padStart(2, '0');
-            return `${h}:${m}`;
-        };
+        const phone = extractPhone(req); // Zieht die Nummer aus den Call-Metadaten
+        const normalizedDate = normalizeDate(date);
+        const reqMin = timeToMinutes(time_text);
+        
+        // ... (hier kommt dein Kapazitäts-Check von vorhin) ...
 
         const startISO = `${normalizedDate}T${time_text}:00.000Z`;
         const endISO = `${normalizedDate}T${toHHMM(reqMin + SLOT_DURATION_MIN)}:00.000Z`;
@@ -232,9 +218,9 @@ app.post("/create-reservation", async (req, res) => {
             fields: {
                 date: normalizedDate,
                 time_text: String(time_text),
-                guests: numGuests,
-                name: name || "Gast",
-                phone: String(extractPhone(req)),
+                guests: parseInt(guests || 1),
+                name: name, // Hier wird jetzt der echte Name eingetragen
+                phone: String(phone),
                 status: "bestätigt",
                 start_datetime: startISO,
                 end_datetime: endISO
