@@ -204,17 +204,35 @@ app.post("/check-availability", async (req, res) => {
 app.post("/create-reservation", async (req, res) => {
     try {
         const { date, time_text, guests, name } = req.body;
-        const phone = extractPhone(req); // <--- Das hier ist entscheidend!
+        
+        // 1. Telefonnummer extrahieren
+        const phone = extractPhone(req); 
+        
+        // 2. Datum normalisieren (DIESE ZEILE HAT GEFEHLT!)
+        const normalizedDate = normalizeDate(date);
 
-        // ... dein restlicher Code (Validierung, Kapazität etc.) ...
+        // 3. Name validieren
+        if (!name || name.trim().toLowerCase() === "gast" || name.length < 2) {
+            return res.json({ 
+                success: false, 
+                error: "Bitte frage den Gast nach seinem Namen." 
+            });
+        }
 
+        const reqMin = timeToMinutes(time_text);
+        const startISO = `${normalizedDate}T${time_text}:00.000Z`;
+        const endISO = `${normalizedDate}T${toHHMM(reqMin + SLOT_DURATION_MIN)}:00.000Z`;
+
+        console.log(`Speichere Reservierung: ${name}, ${phone}, ${normalizedDate}`);
+
+        // 4. In Airtable speichern
         await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             fields: {
                 date: normalizedDate,
                 time_text: String(time_text),
                 guests: parseInt(guests || 1),
                 name: name,
-                phone: phone, // <--- Hier wird die Nummer in das Feld 'phone' geschrieben
+                phone: phone, // Hier wird die Nummer jetzt mitgeschickt
                 status: "bestätigt",
                 start_datetime: startISO,
                 end_datetime: endISO
