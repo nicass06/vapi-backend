@@ -20,19 +20,17 @@ const SLOT_DURATION_MIN = 120;
 // ============================
 
 function extractPhone(req) {
-    // 1. Schau in den tiefen Vapi-Strukturen (Call Objekt)
-    const fromVapiCall = req.body?.message?.call?.customer?.number || 
+    // 1. Priorität: Direkt von Vapi als Tool-Parameter gesendet (über {{customer.number}})
+    if (req.body.phone && !req.body.phone.includes('{')) {
+        return req.body.phone;
+    }
+
+    // 2. Priorität: Aus den tiefen Metadaten des Anrufs extrahieren
+    const fromMetadata = req.body?.message?.call?.customer?.number || 
                          req.body?.customer?.number || 
                          req.body?.call?.from;
-    
-    // 2. Schau in den direkten Parametern (falls Vapi es als Tool-Parameter sendet)
-    const fromParams = req.body?.phone;
 
-    // 3. Priorisiere die echte Anrufernummer, sonst nimm den Parameter
-    const finalPhone = fromVapiCall || fromParams || "";
-    
-    console.log(`Extrahierte Telefonnummer: ${finalPhone}`);
-    return String(finalPhone);
+    return fromMetadata || "Unbekannt";
 }
 
 function normalizeDate(dateInput) {
@@ -205,40 +203,33 @@ app.post("/create-reservation", async (req, res) => {
     try {
         const { date, time_text, guests, name } = req.body;
         
-        // 1. Telefonnummer extrahieren
+        // Erst die Variablen definieren!
         const phone = extractPhone(req); 
-        
-        // 2. Datum normalisieren (DIESE ZEILE HAT GEFEHLT!)
-        const normalizedDate = normalizeDate(date);
+        const normalizedDate = normalizeDate(date); // Das löst deinen "not defined" Fehler
+        const reqMin = timeToMinutes(time_text);
 
-        // 3. Name validieren
-        if (!name || name.trim().toLowerCase() === "gast" || name.length < 2) {
-            return res.json({ 
-                success: false, 
-                error: "Bitte frage den Gast nach seinem Namen." 
-            });
+        // Name prüfen
+        if (!name || name === "Gast") {
+            return res.json({ success: false, error: "Bitte nach dem Namen fragen." });
         }
 
-        const reqMin = timeToMinutes(time_text);
+        // ISO Zeiten für Airtable berechnen
         const startISO = `${normalizedDate}T${time_text}:00.000Z`;
-        const endISO = `${normalizedDate}T${toHHMM(reqMin + SLOT_DURATION_MIN)}:00.000Z`;
+        const endISO = `${normalizedDate}T${toHHMM(reqMin + 120)}:00.000Z`;
 
-        console.log(`Speichere Reservierung: ${name}, ${phone}, ${normalizedDate}`);
-
-        // 4. In Airtable speichern
         await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             fields: {
                 date: normalizedDate,
                 time_text: String(time_text),
                 guests: parseInt(guests || 1),
                 name: name,
-                phone: phone, // Hier wird die Nummer jetzt mitgeschickt
+                phone: phone, // Hier landet jetzt die Nummer statt {{call.from}}
                 status: "bestätigt",
                 start_datetime: startISO,
                 end_datetime: endISO
             }
         }, {
-            headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}`, "Content-Type": "application/json" }
+            headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` }
         });
 
         return res.json({ success: true });
