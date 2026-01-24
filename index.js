@@ -155,7 +155,7 @@ app.post("/check-availability", async (req, res) => {
             return res.json({ 
                 success: true, 
                 available: false, 
-                message: `Das liegt außerhalb unserer Öffnungszeiten. Da wir um ${opening.close} Uhr schließen, ist die letzte Reservierung um ${lastPossibleText} Uhr möglich.` 
+                message: `Das liegt außerhalb unserer Öffnungszeiten. Die letzte Reservierung ist um ${lastPossibleText} Uhr möglich.` 
             });
         }
 
