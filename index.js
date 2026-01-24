@@ -20,10 +20,19 @@ const SLOT_DURATION_MIN = 120;
 // ============================
 
 function extractPhone(req) {
-    return req.body?.message?.call?.customer?.number || 
-           req.body?.customer?.number ||
-           req.body?.call?.from || 
-           "";
+    // 1. Schau in den tiefen Vapi-Strukturen (Call Objekt)
+    const fromVapiCall = req.body?.message?.call?.customer?.number || 
+                         req.body?.customer?.number || 
+                         req.body?.call?.from;
+    
+    // 2. Schau in den direkten Parametern (falls Vapi es als Tool-Parameter sendet)
+    const fromParams = req.body?.phone;
+
+    // 3. Priorisiere die echte Anrufernummer, sonst nimm den Parameter
+    const finalPhone = fromVapiCall || fromParams || "";
+    
+    console.log(`Extrahierte Telefonnummer: ${finalPhone}`);
+    return String(finalPhone);
 }
 
 function normalizeDate(dateInput) {
