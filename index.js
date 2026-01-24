@@ -241,46 +241,61 @@ app.post("/create-reservation", async (req, res) => {
 
 app.post("/cancel-reservation", async (req, res) => {
     try {
-        const { date, time_text } = req.body;
-        const phone = extractPhone(req); // Holt die Nummer des aktuellen Anrufers
-        const normalizedDate = normalizeDate(date);
+        const { reservation_id } = req.body; // Vapi sendet die ID aus dem vorherigen Tool-Call
 
-        console.log(`--- CANCEL START ---`);
-        console.log(`Stornierung gesucht für: ${phone} am ${normalizedDate}`);
-
-        if (!phone) {
-            return res.json({ success: false, error: "Telefonnummer konnte nicht ermittelt werden." });
+        if (!reservation_id) {
+            return res.json({ success: false, error: "Keine Reservierungs-ID übermittelt." });
         }
 
-        // Suche nach der Reservierung mit Telefonnummer UND Datum UND Status bestätigt
-        const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
-            headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { 
-                filterByFormula: `AND({phone}="${phone}", {date}="${normalizedDate}", {status}="bestätigt")` 
-            }
-        });
-
-        if (search.data.records.length === 0) {
-            console.log("Keine passende Reservierung für diese Nummer gefunden.");
-            return res.json({ 
-                success: false, 
-                reason: "not_found", 
-                message: "Ich konnte unter Ihrer Nummer keine bestätigte Reservierung für dieses Datum finden." 
-            });
-        }
-
-        // Falls mehrere gefunden werden (z.B. verschiedene Uhrzeiten), nehmen wir die passende time_text
-        const recordToCancel = search.data.records.find(r => r.fields.time_text === time_text) || search.data.records[0];
-
-        await axios.patch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}/${recordToCancel.id}`, 
+        await axios.patch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}/${reservation_id}`, 
             { fields: { status: "storniert" } },
             { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } }
         );
 
-        console.log(`Reservierung ${recordToCancel.id} erfolgreich storniert.`);
+        console.log(`Reservierung ${reservation_id} erfolgreich storniert.`);
         return res.json({ success: true });
     } catch (err) {
         console.error("Cancel Error:", err.message);
+        res.json({ success: false, error: err.message });
+    }
+});
+
+app.post("/get-reservation-by-phone", async (req, res) => {
+    try {
+        const phone = extractPhone(req); // Holt die Nummer des aktuellen Anrufers
+        console.log(`Suche Reservierung für Nummer: ${phone}`);
+
+        if (!phone || phone === "Unbekannt") {
+            return res.json({ success: false, message: "Telefonnummer nicht erkannt." });
+        }
+
+        // Suche in Airtable nach aktiven Reservierungen für diese Nummer
+        const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
+            headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
+            params: { 
+                filterByFormula: `AND({phone}="${phone}", {status}="bestätigt")`,
+                sort: [{ field: "date", direction: "asc" }] // Die nächste Reservierung zuerst
+            }
+        });
+
+        const records = search.data.records;
+
+        if (records.length === 0) {
+            return res.json({ success: false, message: "Keine aktive Reservierung gefunden." });
+        }
+
+        // Wir geben die Daten der ersten gefundenen Reservierung zurück
+        const resData = records[0].fields;
+        return res.json({ 
+            success: true, 
+            reservation_id: records[0].id,
+            date: resData.date,
+            time: resData.time_text,
+            name: resData.name,
+            guests: resData.guests
+        });
+    } catch (err) {
+        console.error("Fetch Error:", err.message);
         res.json({ success: false, error: err.message });
     }
 });
