@@ -60,6 +60,12 @@ function normalizeDate(dateInput) {
     return candidate.toISOString().slice(0, 10);
 }
 
+const toHHMM = (min) => {
+    const h = Math.floor(min / 60).toString().padStart(2, '0');
+    const m = (min % 60).toString().padStart(2, '0');
+    return `${h}:${m}`;
+};
+
 /**
  * VERBESSERTE FUNKTION: Verarbeitet "17:00" (String) UND 61200 (Sekunden aus Airtable)
  */
@@ -124,49 +130,62 @@ app.post("/check-availability", async (req, res) => {
         console.log(`--- CHECK START ---`);
         console.log(`Anfrage für: ${normalizedDate} um ${time_text} Uhr (${numGuests} Pers.)`);
 
-        // Wir rufen erst einmal ALLE Reservierungen für den Tag ab
-        // WICHTIG: Wir loggen die Trefferanzahl
+        // 1. SCHRITT: ÖFFNUNGSZEITEN PRÜFEN
+        const opening = await getOpeningForDate(normalizedDate);
+        
+        if (opening.closed) {
+            console.log(`ABGELEHNT: Restaurant ist an diesem Tag geschlossen.`);
+            return res.json({ 
+                success: true, 
+                available: false, 
+                message: `Wir haben am ${normalizedDate} leider geschlossen.` 
+            });
+        }
+
+        const openMin = timeToMinutes(opening.open);
+        const closeMin = timeToMinutes(opening.close);
+
+        console.log(`Öffnungszeiten: ${opening.open} bis ${opening.close}`);
+
+        // Prüfung: Startzeit zu früh ODER Aufenthalt (120 Min) geht über Schließzeit hinaus
+        if (reqMin < openMin || (reqMin + SLOT_DURATION_MIN) > closeMin) {
+            const lastPossibleMin = closeMin - SLOT_DURATION_MIN;
+            const lastPossibleText = toHHMM(lastPossibleMin);
+            console.log(`ABGELEHNT: Außerhalb der Öffnungszeiten. Letzter Slot: ${lastPossibleText}`);
+            return res.json({ 
+                success: true, 
+                available: false, 
+                message: `Das liegt außerhalb unserer Öffnungszeiten. Da wir um ${opening.close} Uhr schließen, ist die letzte Reservierung um ${lastPossibleText} Uhr möglich.` 
+            });
+        }
+
+        // 2. SCHRITT: KAPAZITÄT PRÜFEN (nur wenn Schritt 1 OK war)
         const resRecords = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { 
-                // Falls das Datum in Airtable anders formatiert ist, nutzen wir eine flexiblere Suche
-                filterByFormula: `{status}="bestätigt"` 
-            }
+            params: { filterByFormula: `{status}="bestätigt"` }
         });
 
         let currentLoad = 0;
-        const newStart = reqMin;
-        const newEnd = reqMin + SLOT_DURATION_MIN;
-
-        console.log(`Gefundene Datensätze insgesamt: ${resRecords.data.records.length}`);
-
         resRecords.data.records.forEach(record => {
             const fields = record.fields;
-            
-            // Vergleiche das Datum (wir müssen sicherstellen, dass beide Formate passen)
-            // Wir normalisieren das Datum aus Airtable für den Vergleich
-            const recordDate = fields.date; 
-            
-            if (recordDate === normalizedDate || recordDate === date) {
+            if (fields.date === normalizedDate) {
                 const existingStart = timeToMinutes(fields.time_text);
                 const existingEnd = existingStart + SLOT_DURATION_MIN;
-
-                // Überschneidungs-Logik: (Start A < Ende B) UND (Ende A > Start B)
-                if (newStart < existingEnd && newEnd > existingStart) {
+                if (reqMin < existingEnd && (reqMin + SLOT_DURATION_MIN) > existingStart) {
                     currentLoad += (parseInt(fields.guests) || 0);
-                    console.log(`Überschneidung gefunden: ${fields.name} (${fields.guests} Pers.)`);
                 }
             }
         });
 
-        console.log(`Aktuelle Auslastung für den Zeitraum: ${currentLoad}`);
+        console.log(`Aktuelle Auslastung: ${currentLoad}. Kapazität nach Buchung: ${currentLoad + numGuests}`);
         console.log(`--- CHECK ENDE ---`);
 
         if (currentLoad + numGuests > MAX_CAPACITY) {
-            return res.json({ success: true, available: false, message: "Leider ausgebucht." });
+            return res.json({ success: true, available: false, message: "Leider sind wir zu dieser Zeit schon ausgebucht." });
         }
 
         return res.json({ success: true, available: true });
+
     } catch (err) {
         console.error("Check Error:", err.message);
         res.json({ success: false, available: false, error: err.message });
