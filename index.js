@@ -195,32 +195,17 @@ app.post("/check-availability", async (req, res) => {
 app.post("/create-reservation", async (req, res) => {
     try {
         const { date, time_text, guests, name } = req.body;
-        
-        // Validierung: Wenn kein Name da ist, Buchung ablehnen
-        if (!name || name.trim().toLowerCase() === "gast" || name.length < 2) {
-            console.log("Abgelehnt: Kein Name angegeben.");
-            return res.json({ 
-                success: false, 
-                error: "Bitte frage den Gast nach seinem Namen, bevor du die Reservierung buchst." 
-            });
-        }
+        const phone = extractPhone(req); // <--- Das hier ist entscheidend!
 
-        const phone = extractPhone(req); // Zieht die Nummer aus den Call-Metadaten
-        const normalizedDate = normalizeDate(date);
-        const reqMin = timeToMinutes(time_text);
-        
-        // ... (hier kommt dein Kapazitäts-Check von vorhin) ...
-
-        const startISO = `${normalizedDate}T${time_text}:00.000Z`;
-        const endISO = `${normalizedDate}T${toHHMM(reqMin + SLOT_DURATION_MIN)}:00.000Z`;
+        // ... dein restlicher Code (Validierung, Kapazität etc.) ...
 
         await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             fields: {
                 date: normalizedDate,
                 time_text: String(time_text),
                 guests: parseInt(guests || 1),
-                name: name, // Hier wird jetzt der echte Name eingetragen
-                phone: String(phone),
+                name: name,
+                phone: phone, // <--- Hier wird die Nummer in das Feld 'phone' geschrieben
                 status: "bestätigt",
                 start_datetime: startISO,
                 end_datetime: endISO
@@ -239,23 +224,45 @@ app.post("/create-reservation", async (req, res) => {
 app.post("/cancel-reservation", async (req, res) => {
     try {
         const { date, time_text } = req.body;
-        const phone = extractPhone(req);
+        const phone = extractPhone(req); // Holt die Nummer des aktuellen Anrufers
         const normalizedDate = normalizeDate(date);
 
+        console.log(`--- CANCEL START ---`);
+        console.log(`Stornierung gesucht für: ${phone} am ${normalizedDate}`);
+
+        if (!phone) {
+            return res.json({ success: false, error: "Telefonnummer konnte nicht ermittelt werden." });
+        }
+
+        // Suche nach der Reservierung mit Telefonnummer UND Datum UND Status bestätigt
         const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { filterByFormula: `AND({phone}="${phone}", {date}="${normalizedDate}", {status}="bestätigt")` }
+            params: { 
+                filterByFormula: `AND({phone}="${phone}", {date}="${normalizedDate}", {status}="bestätigt")` 
+            }
         });
 
-        if (search.data.records.length === 0) return res.json({ success: false, reason: "not_found" });
+        if (search.data.records.length === 0) {
+            console.log("Keine passende Reservierung für diese Nummer gefunden.");
+            return res.json({ 
+                success: false, 
+                reason: "not_found", 
+                message: "Ich konnte unter Ihrer Nummer keine bestätigte Reservierung für dieses Datum finden." 
+            });
+        }
 
-        await axios.patch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}/${search.data.records[0].id}`, 
+        // Falls mehrere gefunden werden (z.B. verschiedene Uhrzeiten), nehmen wir die passende time_text
+        const recordToCancel = search.data.records.find(r => r.fields.time_text === time_text) || search.data.records[0];
+
+        await axios.patch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}/${recordToCancel.id}`, 
             { fields: { status: "storniert" } },
             { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } }
         );
 
+        console.log(`Reservierung ${recordToCancel.id} erfolgreich storniert.`);
         return res.json({ success: true });
     } catch (err) {
+        console.error("Cancel Error:", err.message);
         res.json({ success: false, error: err.message });
     }
 });
