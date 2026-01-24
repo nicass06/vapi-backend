@@ -20,17 +20,17 @@ const SLOT_DURATION_MIN = 120;
 // ============================
 
 function extractPhone(req) {
-    // 1. Priorität: Direkt von Vapi als Tool-Parameter gesendet (über {{customer.number}})
-    if (req.body.phone && !req.body.phone.includes('{')) {
+    // 1. Schau zuerst, ob Vapi die Nummer direkt im Body mitschickt (durch unser Mapping oben)
+    if (req.body.phone && req.body.phone !== "" && !req.body.phone.includes('{')) {
         return req.body.phone;
     }
 
-    // 2. Priorität: Aus den tiefen Metadaten des Anrufs extrahieren
-    const fromMetadata = req.body?.message?.call?.customer?.number || 
-                         req.body?.customer?.number || 
-                         req.body?.call?.from;
+    // 2. Sicherheits-Check: Suche in den Vapi-Metadaten
+    const fromVapi = req.body.message?.call?.customer?.number || 
+                     req.body.customer?.number || 
+                     req.body.call?.from;
 
-    return fromMetadata || "Unbekannt";
+    return fromVapi || "Unbekannt";
 }
 
 function normalizeDate(dateInput) {
