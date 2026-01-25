@@ -20,19 +20,25 @@ const SLOT_DURATION_MIN = 120;
 // ============================
 
 function extractPhone(req) {
-    // 1. Schau direkt im Root des Bodys (falls über {{customer.number}} gemappt)
-    if (req.body.phone && !req.body.phone.includes('{')) return req.body.phone;
+    console.log("DEBUG: Suche Nummer in Request Body...");
+    
+    // 1. Direkter Parameter vom Tool (durch {{customer.number}} Mapping)
+    if (req.body.phone && req.body.phone.length > 5) return req.body.phone;
 
-    // 2. Schau in der Vapi-spezifischen Tool-Call Struktur
-    const toolParam = req.body.message?.toolCalls?.[0]?.function?.arguments?.phone;
-    if (toolParam && !toolParam.includes('{')) return toolParam;
+    // 2. Vapi ToolCall Arguments
+    const toolArgs = req.body.message?.toolCalls?.[0]?.function?.arguments;
+    if (toolArgs?.phone && toolArgs.phone.length > 5) return toolArgs.phone;
 
-    // 3. Schau in den Anrufer-Metadaten
-    const metadata = req.body.message?.call?.customer?.number || 
-                     req.body.customer?.number || 
-                     req.body.call?.from;
+    // 3. Vapi Customer Metadata (Der sicherste Ort)
+    const customerNum = req.body.message?.call?.customer?.number || 
+                        req.body.call?.customer?.number || 
+                        req.body.customer?.number;
+    if (customerNum) return customerNum;
 
-    return metadata || "Unbekannt";
+    // 4. Fallback: 'from' Feld
+    const fromField = req.body.message?.call?.from || req.body.call?.from;
+    
+    return fromField || "Unbekannt";
 }
 
 function normalizeDate(dateInput) {
