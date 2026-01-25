@@ -275,7 +275,8 @@ app.post("/get-reservation-by-phone", async (req, res) => {
         const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
             params: { 
-                filterByFormula: `AND({phone}="${phone}", {status}="bestätigt")`,
+                // Korrigierte Zeile in deinem Code:
+		filterByFormula: `AND({phone}='${phone}', {status}='bestätigt')`,
                 sort: [{ field: "date", direction: "asc" }] // Die nächste Reservierung zuerst
             }
         });
