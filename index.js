@@ -243,21 +243,39 @@ app.post("/create-reservation", async (req, res) => {
 
 app.post("/cancel-reservation", async (req, res) => {
     try {
-        const { reservation_id } = req.body; // Vapi sendet die ID aus dem vorherigen Tool-Call
+        // Vapi sendet die ID entweder im Body oder in den toolCall-Argumenten
+        const reservation_id = req.body.reservation_id || 
+                               req.body.message?.toolCalls?.[0]?.function?.arguments?.reservation_id;
+
+        console.log(`--- CANCEL START ---`);
+        console.log(`Versuche Record zu stornieren: ${reservation_id}`);
 
         if (!reservation_id) {
-            return res.json({ success: false, error: "Keine Reservierungs-ID übermittelt." });
+            console.error("Fehler: Keine reservation_id erhalten.");
+            return res.json({ 
+                success: false, 
+                error: "Keine ID übermittelt. Der Agent muss erst get_reservation_by_phone aufrufen." 
+            });
         }
 
+        // Status-Update in Airtable auf "storniert"
         await axios.patch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}/${reservation_id}`, 
-            { fields: { status: "storniert" } },
-            { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } }
+            { 
+                fields: { status: "storniert" } 
+            },
+            { 
+                headers: { 
+                    Authorization: `Bearer ${AIRTABLE_TOKEN}`,
+                    "Content-Type": "application/json"
+                } 
+            }
         );
 
-        console.log(`Reservierung ${reservation_id} erfolgreich storniert.`);
-        return res.json({ success: true });
+        console.log(`Erfolg: Reservierung ${reservation_id} wurde storniert.`);
+        return res.json({ success: true, message: "Reservierung erfolgreich storniert." });
+
     } catch (err) {
-        console.error("Cancel Error:", err.message);
+        console.error("Cancel Error:", err.response?.data || err.message);
         res.json({ success: false, error: err.message });
     }
 });
