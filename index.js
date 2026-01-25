@@ -20,18 +20,19 @@ const SLOT_DURATION_MIN = 120;
 // ========================
 
 function extractPhone(req) {
-    // Verhindert den {{customer.number}} Text-Fehler
-    const rawPhone = req.body.phone || req.body.message?.toolCalls?.[0]?.function?.arguments?.phone;
-    if (rawPhone && rawPhone.length > 5 && !rawPhone.includes('{')) {
-        return rawPhone;
-    }
+    // Dieser Log zeigt uns ALLES, was Vapi sendet
+    console.log("VOLLER REQUEST BODY:", JSON.stringify(req.body));
 
-    // Zieht die Nummer sicher aus den Metadaten
-    const metadataPhone = req.body.message?.call?.customer?.number || 
-                          req.body.call?.customer?.number || 
-                          req.body.message?.customer?.number;
+    const metadata = req.body.message?.call?.customer?.number || 
+                     req.body.call?.customer?.number || 
+                     req.body.customer?.number;
+    
+    if (metadata && metadata.length > 5 && !metadata.includes('{')) return metadata;
 
-    return metadataPhone || "Unbekannt";
+    const paramPhone = req.body.phone || req.body.message?.toolCalls?.[0]?.function?.arguments?.phone;
+    if (paramPhone && paramPhone.length > 5 && !paramPhone.includes('{')) return paramPhone;
+
+    return "Unbekannt";
 }
 
 function normalizeDate(dateInput) {
