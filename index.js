@@ -264,31 +264,37 @@ app.post("/cancel-reservation", async (req, res) => {
 
 app.post("/get-reservation-by-phone", async (req, res) => {
     try {
-        const phone = extractPhone(req); // Holt die Nummer des aktuellen Anrufers
-        console.log(`Suche Reservierung für Nummer: ${phone}`);
+        const phone = extractPhone(req);
+        console.log(`--- GET RESERVATION START ---`);
+        console.log(`Eingehende Nummer für Suche: ${phone}`);
 
         if (!phone || phone === "Unbekannt") {
+            console.log("Abbruch: Keine Telefonnummer erkannt.");
             return res.json({ success: false, message: "Telefonnummer nicht erkannt." });
         }
 
-        // Suche in Airtable nach aktiven Reservierungen für diese Nummer
+        // Wir bauen den Filter sauber zusammen und loggen ihn zur Kontrolle
+        const filter = `AND({phone}='${phone}', {status}='bestätigt')`;
+        console.log(`Sende Anfrage an Airtable mit Filter: ${filter}`);
+
         const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
             params: { 
-                // Korrigierte Zeile in deinem Code:
-		filterByFormula: `AND({phone}='${phone}', {status}='bestätigt')`,
-                sort: [{ field: "date", direction: "asc" }] // Die nächste Reservierung zuerst
+                filterByFormula: filter,
+                sort: [{ field: "date", direction: "asc" }]
             }
         });
 
         const records = search.data.records;
+        console.log(`Airtable Abfrage beendet. Treffer gefunden: ${records.length}`);
 
         if (records.length === 0) {
             return res.json({ success: false, message: "Keine aktive Reservierung gefunden." });
         }
 
-        // Wir geben die Daten der ersten gefundenen Reservierung zurück
         const resData = records[0].fields;
+        console.log(`Reservierung gefunden für: ${resData.name} am ${resData.date}`);
+
         return res.json({ 
             success: true, 
             reservation_id: records[0].id,
@@ -297,8 +303,16 @@ app.post("/get-reservation-by-phone", async (req, res) => {
             name: resData.name,
             guests: resData.guests
         });
+
     } catch (err) {
-        console.error("Fetch Error:", err.message);
+        // Erweitertes Error-Logging, falls die API-Anfrage fehlschlägt
+        console.error("KRITISCHER FEHLER in get-reservation-by-phone:");
+        if (err.response) {
+            console.error("Airtable Error Data:", err.response.data);
+            console.error("Airtable Error Status:", err.response.status);
+        } else {
+            console.error("Error Message:", err.message);
+        }
         res.json({ success: false, error: err.message });
     }
 });
