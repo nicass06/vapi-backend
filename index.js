@@ -265,63 +265,49 @@ app.post("/cancel-reservation", async (req, res) => {
 app.post("/get-reservation-by-phone", async (req, res) => {
     try {
         const phone = extractPhone(req);
-        console.log(`--- GET RESERVATION START ---`);
-        console.log(`Eingehende Nummer für Suche: ${phone}`);
+        const cleanPhone = phone.replace(/\s/g, ''); // Entfernt alle Leerzeichen aus der Anrufernummer
+        console.log(`--- DEBUG START ---`);
+        console.log(`Suche nach Nummer: ${cleanPhone}`);
 
-        if (!phone || phone === "Unbekannt") {
-            console.log("Abbruch: Keine Telefonnummer erkannt.");
-            return res.json({ success: false, message: "Telefonnummer nicht erkannt." });
-        }
-
-const debug = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}?maxRecords=3`, {
-    headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` }
-});
-console.log("DEBUG - Erste Datensätze in Airtable:", JSON.stringify(debug.data.records.map(r => r.fields)));
-
-        // Wir bauen den Filter sauber zusammen und loggen ihn zur Kontrolle
-        // Dieser Filter löscht beim Suchen alle Leerzeichen in Airtable, falls welche da sind
-	const filter = `AND(SUBSTITUTE({phone}, ' ', '')='${phone.replace(/\s/g, '')}', {status}='bestätigt')`;
-	console.log(`Sende Sicherheits-Filter: ${filter}`);
+        // SCHRITT 1: Wir suchen NUR nach der Telefonnummer (ohne Status)
+        // Wir nutzen SEARCH(), da dies toleranter gegenüber Formatierungen ist
+        const filter = `SEARCH('${cleanPhone}', SUBSTITUTE({phone}, ' ', ''))`;
+        console.log(`Filter-Formel: ${filter}`);
 
         const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { 
-                filterByFormula: filter,
-                sort: [{ field: "date", direction: "asc" }]
-            }
+            params: { filterByFormula: filter }
         });
 
-        const records = search.data.records;
-        console.log(`Airtable Abfrage beendet. Treffer gefunden: ${records.length}`);
+        console.log(`Anzahl gefundener Datensätze: ${search.data.records.length}`);
 
-        if (records.length === 0) {
-            return res.json({ success: false, message: "Keine aktive Reservierung gefunden." });
+        if (search.data.records.length === 0) {
+            // Wenn nichts gefunden wurde, loggen wir zum Vergleich den ersten Eintrag aus Airtable
+            const all = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}?maxRecords=1`, {
+                headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` }
+            });
+            if (all.data.records.length > 0) {
+                console.log("Kontrolle - So sieht ein Feld in Airtable aus:", all.data.records[0].fields.phone);
+            }
+            return res.json({ success: false, message: "Keine Reservierung gefunden." });
         }
 
-        const resData = records[0].fields;
-        console.log(`Reservierung gefunden für: ${resData.name} am ${resData.date}`);
+        const record = search.data.records[0];
+        console.log(`Erfolg! Reservierung gefunden: ${record.id}`);
 
         return res.json({ 
             success: true, 
-            reservation_id: records[0].id,
-            date: resData.date,
-            time: resData.time_text,
-            name: resData.name,
-            guests: resData.guests
+            reservation_id: record.id,
+            date: record.fields.date,
+            time: record.fields.time_text,
+            name: record.fields.name,
+            guests: record.fields.guests
         });
 
     } catch (err) {
-        // Erweitertes Error-Logging, falls die API-Anfrage fehlschlägt
-        console.error("KRITISCHER FEHLER in get-reservation-by-phone:");
-        if (err.response) {
-            console.error("Airtable Error Data:", err.response.data);
-            console.error("Airtable Error Status:", err.response.status);
-        } else {
-            console.error("Error Message:", err.message);
-        }
+        console.error("Fehler:", err.message);
         res.json({ success: false, error: err.message });
     }
 });
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server läuft auf Port ${PORT}`));
