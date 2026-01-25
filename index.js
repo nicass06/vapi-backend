@@ -212,40 +212,27 @@ app.post("/get-reservation-by-phone", async (req, res) => {
 
 app.post("/cancel-reservation", async (req, res) => {
     try {
-        console.log("--- CANCEL ATTEMPT START ---");
-        // Wir prüfen alle möglichen Orte, an denen Vapi die ID verstecken könnte
+        // Wir fischen die ID aus allen möglichen Vapi-Strukturen
         const reservation_id = req.body.reservation_id || 
-                               req.body.message?.toolCalls?.[0]?.function?.arguments?.reservation_id ||
-                               req.body.message?.toolCallOutputs?.[0]?.reservation_id;
+                               req.body.message?.toolCalls?.[0]?.function?.arguments?.reservation_id;
 
-        console.log("Empfangene ID für Stornierung:", reservation_id);
+        console.log("DEBUG: Versuche Storno für ID:", reservation_id);
 
-        if (!reservation_id || reservation_id === "undefined") {
-            console.error("FEHLER: Keine gültige reservation_id erhalten!");
-            return res.json({ 
-                success: false, 
-                message: "Ich konnte keine Reservierungs-ID finden. Bitte suchen Sie erst nach der Reservierung." 
-            });
+        if (!reservation_id) {
+            console.error("Fehler: Keine ID im Request gefunden!");
+            return res.json({ success: false, message: "ID fehlt" });
         }
 
-        // Der Patch-Request an Airtable
-        const response = await axios.patch(
-            `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}/${reservation_id}`, 
+        await axios.patch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}/${reservation_id}`, 
             { fields: { status: "storniert" } },
-            { 
-                headers: { 
-                    Authorization: `Bearer ${AIRTABLE_TOKEN}`, 
-                    "Content-Type": "application/json" 
-                } 
-            }
+            { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}`, "Content-Type": "application/json" } }
         );
 
-        console.log(`ERFOLG: Record ${reservation_id} auf 'storniert' gesetzt.`);
-        return res.json({ success: true, message: "Die Reservierung wurde erfolgreich storniert." });
-
+        console.log("Erfolg: Status in Airtable auf storniert gesetzt.");
+        return res.json({ success: true });
     } catch (err) {
-        console.error("Airtable Patch Fehler:", err.response?.data || err.message);
-        res.json({ success: false, error: "Stornierung in der Datenbank fehlgeschlagen." });
+        console.error("Airtable Fehler:", err.response?.data || err.message);
+        res.json({ success: false, error: err.message });
     }
 });
 
