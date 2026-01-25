@@ -175,28 +175,40 @@ app.post("/create-reservation", async (req, res) => {
 app.post("/get-reservation-by-phone", async (req, res) => {
     try {
         const phone = extractPhone(req);
-        const cleanPhone = phone.replace(/\s/g, '');
-        console.log(`Suche Reservierung für: ${cleanPhone}`);
+        // Wir entfernen ALLES außer Ziffern für den Vergleich
+        const purePhone = phone.replace(/\D/g, ''); 
+        
+        console.log(`Suche Reservierung für (rein numerisch): ${purePhone}`);
 
-        // Nutzt den robusten Filter
-        const filter = `AND(SUBSTITUTE({phone}, ' ', '')='${cleanPhone}', {status}='bestätigt')`;
+        // Dieser Airtable-Filter entfernt beim Suchen Leerzeichen und "+" aus der Spalte {phone}
+        // und vergleicht es mit deiner rein numerischen Nummer
+        const filter = `AND(SUBSTITUTE(SUBSTITUTE({phone}, ' ', ''), '+', '')='${purePhone}', {status}='bestätigt')`;
+        
         const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
             params: { filterByFormula: filter }
         });
 
-        if (search.data.records.length === 0) return res.json({ success: false, message: "Nichts gefunden." });
+        if (search.data.records.length === 0) {
+            console.log("Keinen Treffer in Airtable gefunden.");
+            return res.json({ success: false, message: "Keine aktive Reservierung gefunden." });
+        }
 
         const record = search.data.records[0];
+        console.log(`Erfolg! Reservierung gefunden für: ${record.fields.name}`);
+
         return res.json({
             success: true,
-            reservation_id: record.id,
+            reservation_id: record.id, // Die wichtige ID für den nächsten Schritt
             date: record.fields.date,
             time: record.fields.time_text,
             name: record.fields.name,
             guests: record.fields.guests
         });
-    } catch (err) { res.json({ success: false, error: err.message }); }
+    } catch (err) {
+        console.error("Fehler bei der Suche:", err.message);
+        res.json({ success: false, error: err.message });
+    }
 });
 
 app.post("/cancel-reservation", async (req, res) => {
