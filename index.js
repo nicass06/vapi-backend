@@ -175,14 +175,15 @@ app.post("/create-reservation", async (req, res) => {
 app.post("/get-reservation-by-phone", async (req, res) => {
     try {
         const phone = extractPhone(req);
-        // Wir entfernen ALLES außer Ziffern für den Vergleich
-        const purePhone = phone.replace(/\D/g, ''); 
+        // Wir lassen das '+' am Anfang stehen, falls vorhanden, 
+        // entfernen aber alle Leerzeichen und sonstige Zeichen.
+        const cleanPhone = phone.replace(/[^\d+]/g, ''); 
         
-        console.log(`Suche Reservierung für (rein numerisch): ${purePhone}`);
+        console.log(`Suche Reservierung für: ${cleanPhone}`);
 
-        // Dieser Airtable-Filter entfernt beim Suchen Leerzeichen und "+" aus der Spalte {phone}
-        // und vergleicht es mit deiner rein numerischen Nummer
-        const filter = `AND(SUBSTITUTE(SUBSTITUTE({phone}, ' ', ''), '+', '')='${purePhone}', {status}='bestätigt')`;
+        // Wir nutzen SEARCH(), das ist bei Teilübereinstimmungen 
+        // und Sonderzeichen in Airtable wesentlich stabiler.
+        const filter = `AND(SEARCH('${cleanPhone}', SUBSTITUTE({phone}, ' ', '')), {status}='bestätigt')`;
         
         const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
@@ -190,23 +191,21 @@ app.post("/get-reservation-by-phone", async (req, res) => {
         });
 
         if (search.data.records.length === 0) {
-            console.log("Keinen Treffer in Airtable gefunden.");
-            return res.json({ success: false, message: "Keine aktive Reservierung gefunden." });
+            console.log("Treffer: 0 (trotz Korrektur)");
+            return res.json({ success: false });
         }
 
         const record = search.data.records[0];
-        console.log(`Erfolg! Reservierung gefunden für: ${record.fields.name}`);
+        console.log(`Gefunden! ID: ${record.id}`);
 
         return res.json({
             success: true,
-            reservation_id: record.id, // Die wichtige ID für den nächsten Schritt
+            reservation_id: record.id,
             date: record.fields.date,
             time: record.fields.time_text,
-            name: record.fields.name,
-            guests: record.fields.guests
+            name: record.fields.name
         });
     } catch (err) {
-        console.error("Fehler bei der Suche:", err.message);
         res.json({ success: false, error: err.message });
     }
 });
