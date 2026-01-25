@@ -273,6 +273,11 @@ app.post("/get-reservation-by-phone", async (req, res) => {
             return res.json({ success: false, message: "Telefonnummer nicht erkannt." });
         }
 
+const debug = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}?maxRecords=3`, {
+    headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` }
+});
+console.log("DEBUG - Erste Datensätze in Airtable:", JSON.stringify(debug.data.records.map(r => r.fields)));
+
         // Wir bauen den Filter sauber zusammen und loggen ihn zur Kontrolle
         // Dieser Filter löscht beim Suchen alle Leerzeichen in Airtable, falls welche da sind
 	const filter = `AND(SUBSTITUTE({phone}, ' ', '')='${phone.replace(/\s/g, '')}', {status}='bestätigt')`;
