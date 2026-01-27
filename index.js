@@ -175,28 +175,35 @@ app.post("/create-reservation", async (req, res) => {
 app.post("/get-reservation-by-phone", async (req, res) => {
     try {
         const phone = extractPhone(req);
-        // Wir lassen das '+' am Anfang stehen, falls vorhanden, 
-        // entfernen aber alle Leerzeichen und sonstige Zeichen.
         const cleanPhone = phone.replace(/[^\d+]/g, ''); 
         
-        console.log(`Suche Reservierung für: ${cleanPhone}`);
+        console.log(`--- SICHERE SUCHE START ---`);
+        console.log(`Suche nach: ${cleanPhone}`);
 
-        // Wir nutzen SEARCH(), das ist bei Teilübereinstimmungen 
-        // und Sonderzeichen in Airtable wesentlich stabiler.
-        const filter = `AND(SEARCH('${cleanPhone}', SUBSTITUTE({phone}, ' ', '')), {status}='bestätigt')`;
-        
+        // FILTER-UPDATE: 
+        // 1. NOT({phone} = '') stellt sicher, dass das Feld nicht leer ist.
+        // 2. SEARCH vergleicht dann die Nummer.
+        const filter = `AND(
+            NOT({phone} = ''),
+            SEARCH('${cleanPhone}', SUBSTITUTE({phone}, ' ', '')),
+            {status}='bestätigt'
+        )`;
+
         const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { filterByFormula: filter }
+            params: { 
+                filterByFormula: filter,
+                sort: [{ field: "date", direction: "desc" }] // Immer die aktuellste zuerst
+            }
         });
 
         if (search.data.records.length === 0) {
-            console.log("Treffer: 0 (trotz Korrektur)");
+            console.log("Kein echter Treffer mit Nummer gefunden.");
             return res.json({ success: false });
         }
 
         const record = search.data.records[0];
-        console.log(`Gefunden! ID: ${record.id}`);
+        console.log(`Treffer gefunden! Name: ${record.fields.name}, Datum: ${record.fields.date}`);
 
         return res.json({
             success: true,
@@ -206,10 +213,10 @@ app.post("/get-reservation-by-phone", async (req, res) => {
             name: record.fields.name
         });
     } catch (err) {
+        console.error("Suche fehlgeschlagen:", err.message);
         res.json({ success: false, error: err.message });
     }
 });
-
 app.post("/cancel-reservation", async (req, res) => {
     try {
         // Wir fischen die ID aus allen möglichen Vapi-Strukturen
