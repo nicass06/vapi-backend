@@ -32,13 +32,13 @@ function extractPhone(req) {
 }
 
 function normalizeDate(dateInput) {
-    if (!dateInput) return "";
-    let today = new Date();
-    today.setHours(0, 0, 0, 0);
-    let candidate = new Date(today);
+    if (!dateInput) return new Date().toISOString().slice(0, 10);
+    
+    let candidate = new Date();
+    candidate.setHours(0, 0, 0, 0);
     const lowerInput = dateInput.toLowerCase();
 
-    // 1. Relative Begriffe verarbeiten
+    // 1. Relative Begriffe
     if (lowerInput.includes("heute") || lowerInput === "today") {
         // bleibt heute
     } else if (lowerInput.includes("morgen") && !lowerInput.includes("über")) {
@@ -46,17 +46,38 @@ function normalizeDate(dateInput) {
     } else if (lowerInput.includes("übermorgen")) {
         candidate.setDate(candidate.getDate() + 2);
     } else {
-        // 2. Festes Datum parsen (z.B. "31.01.2026" oder "2026-01-31")
+        // 2. Deutsches Format DD.MM.YYYY parsen
         const parts = dateInput.split(".");
         if (parts.length >= 2) {
             let day = parseInt(parts[0], 10);
             let month = parseInt(parts[1], 10) - 1;
-            let year = parts[2] ? parseInt(parts[2], 10) : today.getFullYear();
+            let year = parts[2] ? parseInt(parts[2], 10) : candidate.getFullYear();
+            // Falls Jahr zweistellig (z.B. "26")
+            if (year < 100) year += 2000; 
             candidate = new Date(year, month, day);
         } else {
+            // ISO oder US Format
             candidate = new Date(dateInput);
         }
     }
+
+    // WICHTIG: Wenn dein Airtable-Feld ein "TEXT"-Feld mit 31.01.2026 ist:
+    const d = String(candidate.getDate()).padStart(2, '0');
+    const m = String(candidate.getMonth() + 1).padStart(2, '0');
+    const y = candidate.getFullYear();
+    
+    const germanFormat = `${d}.${m}.${y}`;
+    const isoFormat = candidate.toISOString().slice(0, 10);
+
+    // Wir loggen beides zur Fehlersuche
+    console.log(`Input: ${dateInput} -> ISO: ${isoFormat} | German: ${germanFormat}`);
+
+    // GIB HIER DAS FORMAT ZURÜCK, DAS IN DEINER AIRTABLE SPALTE STEHT
+    // Wenn in Airtable "31.01.2026" steht, nutze: return germanFormat;
+    // Wenn in Airtable "2026-01-31" steht, nutze: return isoFormat;
+    
+    return germanFormat; 
+}
 
     // 3. EXAKT für Airtable formatieren: DD.MM.YYYY
     const d = String(candidate.getDate()).padStart(2, '0');
