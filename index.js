@@ -109,40 +109,56 @@ async function getOpeningForDate(dateISO) {
 
 app.post("/check-availability", async (req, res) => {
     try {
-        const { date, time_text, guests } = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
-        const normalizedDate = normalizeDate(date);
-        const reqMin = timeToMinutes(time_text);
-        const numGuests = parseInt(guests || 0);
-
-        const opening = await getOpeningForDate(normalizedDate);
-        if (opening.closed) return res.json({ success: true, available: false, message: `Wir haben am ${normalizedDate} leider geschlossen.` });
-
-        const openMin = timeToMinutes(opening.open);
-        const closeMin = timeToMinutes(opening.close);
-        if (reqMin < openMin || (reqMin + SLOT_DURATION_MIN) > closeMin) {
-            return res.json({ success: true, available: false, message: `Außerhalb der Öffnungszeiten.` });
-        }
-
-        const resRecords = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
+        const { date, time_text } = req.body; // time_text ist z.B. "18:00"
+        
+        // 1. Konfiguration laden (Kapazität & Dauer)
+        const dayOfWeek = moment(date).format('dddd');
+        const configSearch = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${OPENING_HOURS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { filterByFormula: `{status}="bestätigt"` }
+            params: { filterByFormula: `{day}='${dayOfWeek}'` }
         });
 
-        let currentLoad = 0;
-        resRecords.data.records.forEach(record => {
-            const fields = record.fields;
-            if (fields.date === normalizedDate) {
-                const existingStart = timeToMinutes(fields.time_text);
-                const existingEnd = existingStart + SLOT_DURATION_MIN;
-                if (reqMin < existingEnd && (reqMin + SLOT_DURATION_MIN) > existingStart) {
-                    currentLoad += (parseInt(fields.guests) || 0);
-                }
+        const config = configSearch.data.records[0]?.fields;
+        const maxCapacity = config?.max_capacity || 4;
+        const slotDuration = config?.slot_duration || 120; // Standard 120, falls leer
+
+        // 2. Zeitberechnung für Überschneidungen
+        const requestedStart = moment(`${date} ${time_text}`, "YYYY-MM-DD HH:mm");
+        const requestedEnd = moment(requestedStart).add(slotDuration, 'minutes');
+
+        // 3. Alle bestätigten Reservierungen für diesen Tag holen
+        const reservationSearch = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
+            headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
+            params: { 
+                filterByFormula: `AND({date}='${date}', {status}='bestätigt')` 
             }
         });
 
-        if (currentLoad + numGuests > MAX_CAPACITY) return res.json({ success: true, available: false, message: "Leider ausgebucht." });
-        return res.json({ success: true, available: true });
-    } catch (err) { res.json({ success: false, error: err.message }); }
+        // 4. Prüfen, wie viele Reservierungen sich zeitlich überschneiden
+        const overlappingBookings = reservationSearch.data.records.filter(record => {
+            const bookingStart = moment(`${record.fields.date} ${record.fields.time_text}`, "YYYY-MM-DD HH:mm");
+            // Wir nehmen hier auch die slotDuration aus der Config für bestehende Buchungen
+            const bookingEnd = moment(bookingStart).add(slotDuration, 'minutes');
+
+            // Überschneidungs-Logik: (StartA < EndeB) UND (EndeA > StartB)
+            return (requestedStart < bookingEnd) && (requestedEnd > bookingStart);
+        });
+
+        const currentLoad = overlappingBookings.length;
+
+        if (currentLoad < maxCapacity) {
+            return res.json({ 
+                success: true, 
+                remaining: maxCapacity - currentLoad,
+                duration: slotDuration 
+            });
+        } else {
+            return res.json({ success: false, message: "In diesem Zeitraum sind leider alle Tische belegt." });
+        }
+    } catch (err) {
+        console.error(err);
+        res.json({ success: false, error: err.message });
+    }
 });
 
 app.post("/create-reservation", async (req, res) => {
