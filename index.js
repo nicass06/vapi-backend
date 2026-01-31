@@ -1,7 +1,6 @@
 import express from "express";
 import axios from "axios";
 import cors from "cors";
-import moment from "moment";
 
 const app = express();
 app.use(cors());
@@ -16,8 +15,7 @@ const OPENING_EXCEPTIONS_TABLE = "opening_exceptions";
 // ========================
 // FESTE KONFIGURATION IM CODE
 // ========================
-const MAX_CAPACITY = 10;
-const SLOT_DURATION_MIN = 120; // Die 120 Minuten wieder fest im Code
+const MAX_CAPACITY = 10; 
 
 // ========================
 // HILFSFUNKTIONEN
@@ -63,78 +61,41 @@ function normalizeDate(dateInput) {
     return candidate.toISOString().slice(0, 10);
 }
 
-const timeToMinutes = (timeVal) => {
-    if (!timeVal) return 0;
-    if (typeof timeVal === 'number') return Math.floor(timeVal / 60);
-    if (typeof timeVal === 'string') {
-        const parts = timeVal.split(":");
-        return parts.length < 2 ? 0 : parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
-    }
-    return 0;
-};
-
-const toHHMM = (min) => {
-    const h = Math.floor(min / 60).toString().padStart(2, '0');
-    const m = (min % 60).toString().padStart(2, '0');
-    return `${h}:${m}`;
-};
-
 // ========================
 // ROUTES
 // ========================
 
+// 1. Verfügbarkeit prüfen (Einfacher Text-Abgleich der Uhrzeit)
 app.post("/check-availability", async (req, res) => {
     try {
-        const { date, time_text } = req.body;
-        
-        // 1. Zeitberechnung für Überschneidungen mit festen Werten
-        const requestedStart = moment(`${date} ${time_text}`, "YYYY-MM-DD HH:mm");
-        const requestedEnd = moment(requestedStart).add(SLOT_DURATION_MIN, 'minutes');
+        const { date, time_text } = req.body; // Erwartet "YYYY-MM-DD" und "HH:mm"
 
-        // 2. Alle bestätigten Reservierungen für diesen Tag holen
-        const reservationSearch = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
+        const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
             params: { 
-                filterByFormula: `AND({date}='${date}', {status}='bestätigt')` 
+                filterByFormula: `AND({date}='${date}', {time_text}='${time_text}', {status}='bestätigt')` 
             }
         });
 
-        // 3. Prüfen, wie viele Reservierungen sich zeitlich überschneiden
-        const overlappingBookings = reservationSearch.data.records.filter(record => {
-            const bookingStart = moment(`${record.fields.date} ${record.fields.time_text}`, "YYYY-MM-DD HH:mm");
-            const bookingEnd = moment(bookingStart).add(SLOT_DURATION_MIN, 'minutes');
+        const count = search.data.records.length;
 
-            // Überschneidungs-Logik: (StartA < EndeB) UND (EndeA > StartB)
-            return (requestedStart < bookingEnd) && (requestedEnd > bookingStart);
-        });
-
-        const currentLoad = overlappingBookings.length;
-
-        if (currentLoad < MAX_CAPACITY) {
-            return res.json({ 
-                success: true, 
-                remaining: MAX_CAPACITY - currentLoad,
-                duration: SLOT_DURATION_MIN 
-            });
+        if (count < MAX_CAPACITY) {
+            res.json({ success: true, remaining: MAX_CAPACITY - count });
         } else {
-            return res.json({ success: false, message: "In diesem Zeitraum sind leider alle Tische belegt." });
+            res.json({ success: false, message: "In diesem Slot sind leider alle Tische belegt." });
         }
     } catch (err) {
-        console.error("Check Error:", err.message);
         res.json({ success: false, error: err.message });
     }
 });
 
+// 2. Reservierung erstellen
 app.post("/create-reservation", async (req, res) => {
     try {
         const args = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
         const { date, time_text, guests, name } = args;
         const phone = extractPhone(req);
         const normalizedDate = normalizeDate(date);
-        const reqMin = timeToMinutes(time_text);
-
-        const startISO = `${normalizedDate}T${time_text}:00.000Z`;
-        const endISO = `${normalizedDate}T${toHHMM(reqMin + SLOT_DURATION_MIN)}:00.000Z`;
 
         await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             fields: {
@@ -143,9 +104,7 @@ app.post("/create-reservation", async (req, res) => {
                 guests: parseInt(guests || 1),
                 name,
                 phone,
-                status: "bestätigt",
-                start_datetime: startISO,
-                end_datetime: endISO
+                status: "bestätigt"
             }
         }, { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } });
 
@@ -153,6 +112,7 @@ app.post("/create-reservation", async (req, res) => {
     } catch (err) { res.json({ success: false, error: err.message }); }
 });
 
+// 3. Suche per Telefon
 app.post("/get-reservation-by-phone", async (req, res) => {
     try {
         const phone = extractPhone(req);
@@ -183,6 +143,7 @@ app.post("/get-reservation-by-phone", async (req, res) => {
     }
 });
 
+// 4. Stornieren
 app.post("/cancel-reservation", async (req, res) => {
     try {
         const reservation_id = req.body.reservation_id || 
