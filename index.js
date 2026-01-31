@@ -144,30 +144,49 @@ app.post("/check-availability", async (req, res) => {
 app.post("/create-reservation", async (req, res) => {
     try {
         const args = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
-        const { date, time_text, guests, name } = args;
-        const phone = extractPhone(req);
-        const normalizedDate = normalizeDate(date);
+        const dateObj = getFormattedDate(args.date);
+        const reqMin = timeToMinutes(args.time_text);
         
-        const reqMin = timeToMinutes(time_text);
-        const startISO = `${normalizedDate}T${time_text}:00.000Z`;
-        const endISO = `${normalizedDate}T${toHHMM(reqMin + SLOT_DURATION_MIN)}:00.000Z`;
+        // Wir bauen die Zeitstempel ohne das "Z" am Ende, 
+        // um Konflikte mit der lokalen Zeit in Airtable zu vermeiden.
+        const startISO = `${dateObj.iso}T${args.time_text}:00.000`;
+        const endISO = `${dateObj.iso}T${toHHMM(reqMin + SLOT_DURATION_MIN)}:00.000`;
 
-        await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
+        console.log("Sende an Airtable:", {
+            date: dateObj.german,
+            start: startISO,
+            end: endISO
+        });
+
+        const payload = {
             fields: {
-                date: normalizedDate,
-                time_text,
-                guests: parseInt(guests || 1, 10),
-                name,
-                phone,
+                date: dateObj.german,
+                time_text: String(args.time_text),
+                guests: parseInt(args.guests || 1, 10),
+                name: String(args.name || "Kein Name"),
                 status: "bestätigt",
                 start_datetime: startISO,
                 end_datetime: endISO
             }
-        }, { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } });
+        };
+
+        const response = await axios.post(
+            `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`,
+            payload,
+            { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}`, "Content-Type": "application/json" } }
+        );
 
         return res.json({ success: true });
     } catch (err) {
-        res.json({ success: false, error: err.message });
+        // DAS HIER IST ENTSCHEIDEND:
+        // Es zeigt dir im Render-Log genau, warum Airtable "Nein" sagt.
+        const airtableError = err.response?.data?.error;
+        console.error("AIRTABLE REJECTED:", airtableError || err.message);
+        
+        res.status(500).json({ 
+            success: false, 
+            error: airtableError?.message || err.message 
+        });
     }
 });
 
