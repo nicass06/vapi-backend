@@ -145,42 +145,51 @@ async function getOpeningForDate(dateISO) {
 // ROUTES
 // ========================
 
+// Hilfsfunktion: Macht aus "18:30" eine Zahl (1830) zum einfachen Vergleichen
+function timeToNumber(timeStr) {
+    return parseInt(timeStr.replace(":", ""), 10);
+}
+
 app.post("/check-availability", async (req, res) => {
     try {
-        const { date, time_text, guests } = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
-        const normalizedDate = normalizeDate(date);
-        const reqMin = timeToMinutes(time_text);
-        const numGuests = parseInt(guests || 0);
+        const { date, time_text } = req.body;
+        const opening = await getOpeningForDate(date);
 
-        const opening = await getOpeningForDate(normalizedDate);
-        if (opening.closed) return res.json({ success: true, available: false, message: `Wir haben am ${normalizedDate} leider geschlossen.` });
-
-        const openMin = timeToMinutes(opening.open);
-        const closeMin = timeToMinutes(opening.close);
-        if (reqMin < openMin || (reqMin + SLOT_DURATION_MIN) > closeMin) {
-            return res.json({ success: true, available: false, message: `Außerhalb der Öffnungszeiten.` });
+        if (opening.closed) {
+            return res.json({ success: false, message: "Wir haben an diesem Tag geschlossen." });
         }
 
-        const resRecords = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
-            headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { filterByFormula: `{status}="bestätigt"` }
-        });
+        // ZEIT-CHECK LOGIK
+        const checkTime = timeToNumber(time_text);
+        const openTime = timeToNumber(opening.open);
+        const closeTime = timeToNumber(opening.close);
 
-        let currentLoad = 0;
-        resRecords.data.records.forEach(record => {
-            const fields = record.fields;
-            if (fields.date === normalizedDate) {
-                const existingStart = timeToMinutes(fields.time_text);
-                const existingEnd = existingStart + SLOT_DURATION_MIN;
-                if (reqMin < existingEnd && (reqMin + SLOT_DURATION_MIN) > existingStart) {
-                    currentLoad += (parseInt(fields.guests) || 0);
-                }
+        console.log(`Check: ${checkTime} zwischen ${openTime} und ${closeTime}?`);
+
+        if (checkTime < openTime || checkTime > closeTime) {
+            return res.json({ 
+                success: false, 
+                message: `Außerhalb der Öffnungszeiten. Wir haben von ${opening.open} bis ${opening.close} Uhr offen.` 
+            });
+        }
+
+        // ... hier folgt dein bisheriger Airtable-Check für die Kapazität ...
+        const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
+            headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
+            params: { 
+                filterByFormula: `AND({date}='${date}', {time_text}='${time_text}', {status}='bestätigt')` 
             }
         });
 
-        if (currentLoad + numGuests > MAX_CAPACITY) return res.json({ success: true, available: false, message: "Leider ausgebucht." });
-        return res.json({ success: true, available: true });
-    } catch (err) { res.json({ success: false, error: err.message }); }
+        if (search.data.records.length < MAX_CAPACITY) {
+            res.json({ success: true });
+        } else {
+            res.json({ success: false, message: "Leider ausgebucht." });
+        }
+
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
 });
 
 app.post("/create-reservation", async (req, res) => {
