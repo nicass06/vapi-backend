@@ -12,8 +12,8 @@ const RESERVATIONS_TABLE = "Reservations";
 const OPENING_HOURS_TABLE = "opening_hours";
 const OPENING_EXCEPTIONS_TABLE = "opening_exceptions";
 
-const MAX_CAPACITY = 10;
-const SLOT_DURATION_MIN = 120;
+const MAX_CAPACITY = process.env.MAX_CAPACITY || 4;
+const SLOT_DURATION = process.env.SLOT_DURATION || 120;
 
 // ========================
 // HILFSFUNKTIONEN
