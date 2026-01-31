@@ -140,19 +140,17 @@ app.post("/check-availability", async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
-
 app.post("/create-reservation", async (req, res) => {
     try {
         const args = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
-        const dateObj = getFormattedDate(args.date);
+        const dateObj = getFormattedDate(args.date); // Nutzt die Funktion, die german: "31.01.2026" liefert
         const reqMin = timeToMinutes(args.time_text);
         
-        // Airtable schluckt dieses Format am besten: "YYYY-MM-DD HH:mm"
-        // Wir nehmen das ISO-Datum und hängen die Uhrzeit einfach dran.
-        const startTimestamp = `${dateObj.iso} ${args.time_text}`;
-        const endTimestamp = `${dateObj.iso} ${toHHMM(reqMin + SLOT_DURATION_MIN)}`;
+        // Formatierung auf DD.MM.YYYY HH:mm
+        const startTimeGerman = `${dateObj.german} ${args.time_text}`;
+        const endTimeGerman = `${dateObj.german} ${toHHMM(reqMin + SLOT_DURATION_MIN)}`;
 
-        console.log(`Versuche Eintrag: ${args.name} am ${dateObj.german} von ${startTimestamp} bis ${endTimestamp}`);
+        console.log(`Erstelle Eintrag im deutschen Format: ${startTimeGerman}`);
 
         const payload = {
             fields: {
@@ -161,28 +159,21 @@ app.post("/create-reservation", async (req, res) => {
                 "guests": parseInt(args.guests || 1, 10),
                 "name": String(args.name || "Gast"),
                 "status": "bestätigt",
-                "start_datetime": startTimestamp, // Format: 2026-01-31 18:00
-                "end_datetime": endTimestamp      // Format: 2026-01-31 20:00
+                "start_datetime": startTimeGerman, // Jetzt: "31.01.2026 18:00"
+                "end_datetime": endTimeGerman      // Jetzt: "31.01.2026 20:00"
             }
         };
 
-        const response = await axios.post(
+        await axios.post(
             `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`,
             payload,
             { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}`, "Content-Type": "application/json" } }
         );
 
-        console.log("Erfolg! Airtable ID:", response.data.id);
         return res.json({ success: true });
 
     } catch (err) {
-        // Jetzt loggen wir den EXAKTEN Grund von Airtable
-        if (err.response && err.response.data) {
-            console.error("AIRTABLE FEHLER DETAILS:", JSON.stringify(err.response.data.error));
-        } else {
-            console.error("FEHLER:", err.message);
-        }
-        
+        console.error("AIRTABLE FEHLER:", err.response?.data?.error || err.message);
         res.status(500).json({ 
             success: false, 
             error: err.response?.data?.error?.message || err.message 
