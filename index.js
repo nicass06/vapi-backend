@@ -80,16 +80,27 @@ const toHHMM = (min) => {
     return `${h}:${m}`;
 };
 
+// 1. Hilfsfunktion zum Umrechnen der Airtable-Sekunden
+function formatAirtableTime(input) {
+    if (typeof input === 'number') {
+        const hours = Math.floor(input / 3600).toString().padStart(2, '0');
+        const minutes = Math.floor((input % 3600) / 60).toString().padStart(2, '0');
+        return `${hours}:${minutes}`;
+    }
+    return input; // Falls es schon "17:00" als Text ist
+}
+
+// 2. Die verbesserte Hauptfunktion
 async function getOpeningForDate(dateISO) {
     const weekdayMap = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
     const dateObj = new Date(dateISO);
     const germanWeekday = weekdayMap[dateObj.getDay()];
     
     console.log(`--- DEBUG ÖFFNUNGSZEITEN START ---`);
-    console.log(`Datum: ${dateISO}, Erkannt als: ${germanWeekday}`);
+    console.log(`Datum: ${dateISO}, Wochentag: ${germanWeekday}`);
 
     try {
-        // 1. Exceptions prüfen
+        // Exceptions prüfen (Urlaub/Feiertage)
         const exRes = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${OPENING_EXCEPTIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
             params: { filterByFormula: `{date}='${dateISO}'` }
@@ -97,28 +108,35 @@ async function getOpeningForDate(dateISO) {
 
         if (exRes.data.records.length > 0) {
             const ex = exRes.data.records[0].fields;
-            console.log(`Exception gefunden: ${ex.closed ? 'GESCHLOSSEN' : 'GEÄNDERT: ' + ex.open_time}`);
             if (ex.closed) return { closed: true };
-            return { closed: false, open: ex.open_time, close: ex.close_time };
+            return { 
+                closed: false, 
+                open: formatAirtableTime(ex.open_time), 
+                close: formatAirtableTime(ex.close_time) 
+            };
         }
 
-        // 2. Reguläre Öffnungszeiten
+        // Reguläre Zeiten prüfen
         const hoursRes = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${OPENING_HOURS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
             params: { filterByFormula: `{weekday}="${germanWeekday}"` }
         });
 
         if (hoursRes.data.records.length === 0) {
-            console.warn(`KEIN EINTRAG in Airtable für Wochentag: ${germanWeekday}`);
+            console.log("Kein Eintrag für diesen Wochentag gefunden.");
             return { closed: true };
         }
         
         const fields = hoursRes.data.records[0].fields;
-        console.log(`Airtable Ergebnis: Offen von ${fields.open_time} bis ${fields.close_time}`);
+        const open = formatAirtableTime(fields.open_time);
+        const close = formatAirtableTime(fields.close_time);
+
+        console.log(`Airtable Rohdaten: ${fields.open_time} / Formatiert: ${open}`);
+        console.log(`Ergebnis: Offen von ${open} bis ${close}`);
         
-        return { closed: false, open: fields.open_time, close: fields.close_time };
+        return { closed: false, open, close };
     } catch (e) { 
-        console.error("KRITISCHER FEHLER in getOpeningForDate:", e.message);
+        console.error("Fehler:", e.message);
         return { closed: true }; 
     }
 }
