@@ -12,23 +12,26 @@ const RESERVATIONS_TABLE = "Reservations";
 const OPENING_HOURS_TABLE = "opening_hours";
 const OPENING_EXCEPTIONS_TABLE = "opening_exceptions";
 
-// ========================
-// FESTE KONFIGURATION IM CODE
-// ========================
-const MAX_CAPACITY = 10; 
+const MAX_CAPACITY = 10;
+const SLOT_DURATION_MIN = 120;
 
 // ========================
 // HILFSFUNKTIONEN
 // ========================
 
 function extractPhone(req) {
+    // Dieser Log zeigt uns ALLES, was Vapi sendet
+    console.log("VOLLER REQUEST BODY:", JSON.stringify(req.body));
+
     const metadata = req.body.message?.call?.customer?.number || 
                      req.body.call?.customer?.number || 
                      req.body.customer?.number;
     
     if (metadata && metadata.length > 5 && !metadata.includes('{')) return metadata;
+
     const paramPhone = req.body.phone || req.body.message?.toolCalls?.[0]?.function?.arguments?.phone;
     if (paramPhone && paramPhone.length > 5 && !paramPhone.includes('{')) return paramPhone;
+
     return "Unbekannt";
 }
 
@@ -61,41 +64,96 @@ function normalizeDate(dateInput) {
     return candidate.toISOString().slice(0, 10);
 }
 
+const timeToMinutes = (timeVal) => {
+    if (!timeVal) return 0;
+    if (typeof timeVal === 'number') return Math.floor(timeVal / 60);
+    if (typeof timeVal === 'string') {
+        const parts = timeVal.split(":");
+        return parts.length < 2 ? 0 : parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+    }
+    return 0;
+};
+
+const toHHMM = (min) => {
+    const h = Math.floor(min / 60).toString().padStart(2, '0');
+    const m = (min % 60).toString().padStart(2, '0');
+    return `${h}:${m}`;
+};
+
+async function getOpeningForDate(dateISO) {
+    const weekdayMap = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
+    const germanWeekday = weekdayMap[new Date(dateISO).getDay()];
+    try {
+        const exRes = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${OPENING_EXCEPTIONS_TABLE}`, {
+            headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
+            params: { filterByFormula: `{date}='${dateISO}'` }
+        });
+        if (exRes.data.records.length > 0) {
+            const ex = exRes.data.records[0].fields;
+            if (ex.closed) return { closed: true, reason: ex.reason || "geschlossen" };
+            return { closed: false, open: ex.open_time, close: ex.close_time };
+        }
+        const hoursRes = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${OPENING_HOURS_TABLE}`, {
+            headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
+            params: { filterByFormula: `AND({restaurant_id}="main", {weekday}="${germanWeekday}")` }
+        });
+        if (hoursRes.data.records.length === 0) return { closed: true, reason: "Kein Eintrag" };
+        const fields = hoursRes.data.records[0].fields;
+        return { closed: false, open: fields.open_time, close: fields.close_time };
+    } catch (e) { return { closed: true, reason: "Fehler bei Abfrage" }; }
+}
+
 // ========================
 // ROUTES
 // ========================
 
-// 1. Verfügbarkeit prüfen (Einfacher Text-Abgleich der Uhrzeit)
 app.post("/check-availability", async (req, res) => {
     try {
-        const { date, time_text } = req.body; // Erwartet "YYYY-MM-DD" und "HH:mm"
+        const { date, time_text, guests } = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
+        const normalizedDate = normalizeDate(date);
+        const reqMin = timeToMinutes(time_text);
+        const numGuests = parseInt(guests || 0);
 
-        const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
+        const opening = await getOpeningForDate(normalizedDate);
+        if (opening.closed) return res.json({ success: true, available: false, message: `Wir haben am ${normalizedDate} leider geschlossen.` });
+
+        const openMin = timeToMinutes(opening.open);
+        const closeMin = timeToMinutes(opening.close);
+        if (reqMin < openMin || (reqMin + SLOT_DURATION_MIN) > closeMin) {
+            return res.json({ success: true, available: false, message: `Außerhalb der Öffnungszeiten.` });
+        }
+
+        const resRecords = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { 
-                filterByFormula: `AND({date}='${date}', {time_text}='${time_text}', {status}='bestätigt')` 
+            params: { filterByFormula: `{status}="bestätigt"` }
+        });
+
+        let currentLoad = 0;
+        resRecords.data.records.forEach(record => {
+            const fields = record.fields;
+            if (fields.date === normalizedDate) {
+                const existingStart = timeToMinutes(fields.time_text);
+                const existingEnd = existingStart + SLOT_DURATION_MIN;
+                if (reqMin < existingEnd && (reqMin + SLOT_DURATION_MIN) > existingStart) {
+                    currentLoad += (parseInt(fields.guests) || 0);
+                }
             }
         });
 
-        const count = search.data.records.length;
-
-        if (count < MAX_CAPACITY) {
-            res.json({ success: true, remaining: MAX_CAPACITY - count });
-        } else {
-            res.json({ success: false, message: "In diesem Slot sind leider alle Tische belegt." });
-        }
-    } catch (err) {
-        res.json({ success: false, error: err.message });
-    }
+        if (currentLoad + numGuests > MAX_CAPACITY) return res.json({ success: true, available: false, message: "Leider ausgebucht." });
+        return res.json({ success: true, available: true });
+    } catch (err) { res.json({ success: false, error: err.message }); }
 });
 
-// 2. Reservierung erstellen
 app.post("/create-reservation", async (req, res) => {
     try {
-        const args = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
-        const { date, time_text, guests, name } = args;
+        const { date, time_text, guests, name } = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
         const phone = extractPhone(req);
         const normalizedDate = normalizeDate(date);
+        const reqMin = timeToMinutes(time_text);
+
+        const startISO = `${normalizedDate}T${time_text}:00.000Z`;
+        const endISO = `${normalizedDate}T${toHHMM(reqMin + 120)}:00.000Z`;
 
         await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             fields: {
@@ -104,7 +162,9 @@ app.post("/create-reservation", async (req, res) => {
                 guests: parseInt(guests || 1),
                 name,
                 phone,
-                status: "bestätigt"
+                status: "bestätigt",
+                start_datetime: startISO,
+                end_datetime: endISO
             }
         }, { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } });
 
@@ -112,25 +172,39 @@ app.post("/create-reservation", async (req, res) => {
     } catch (err) { res.json({ success: false, error: err.message }); }
 });
 
-// 3. Suche per Telefon
 app.post("/get-reservation-by-phone", async (req, res) => {
     try {
         const phone = extractPhone(req);
         const cleanPhone = phone.replace(/[^\d+]/g, ''); 
         
-        const filter = `AND(NOT({phone} = ''), SEARCH('${cleanPhone}', SUBSTITUTE({phone}, ' ', '')), {status}='bestätigt')`;
+        console.log(`--- SICHERE SUCHE START ---`);
+        console.log(`Suche nach: ${cleanPhone}`);
+
+        // FILTER-UPDATE: 
+        // 1. NOT({phone} = '') stellt sicher, dass das Feld nicht leer ist.
+        // 2. SEARCH vergleicht dann die Nummer.
+        const filter = `AND(
+            NOT({phone} = ''),
+            SEARCH('${cleanPhone}', SUBSTITUTE({phone}, ' ', '')),
+            {status}='bestätigt'
+        )`;
 
         const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
             params: { 
                 filterByFormula: filter,
-                sort: [{ field: "date", direction: "desc" }]
+                sort: [{ field: "date", direction: "desc" }] // Immer die aktuellste zuerst
             }
         });
 
-        if (search.data.records.length === 0) return res.json({ success: false });
+        if (search.data.records.length === 0) {
+            console.log("Kein echter Treffer mit Nummer gefunden.");
+            return res.json({ success: false });
+        }
 
         const record = search.data.records[0];
+        console.log(`Treffer gefunden! Name: ${record.fields.name}, Datum: ${record.fields.date}`);
+
         return res.json({
             success: true,
             reservation_id: record.id,
@@ -139,25 +213,32 @@ app.post("/get-reservation-by-phone", async (req, res) => {
             name: record.fields.name
         });
     } catch (err) {
+        console.error("Suche fehlgeschlagen:", err.message);
         res.json({ success: false, error: err.message });
     }
 });
-
-// 4. Stornieren
 app.post("/cancel-reservation", async (req, res) => {
     try {
+        // Wir fischen die ID aus allen möglichen Vapi-Strukturen
         const reservation_id = req.body.reservation_id || 
                                req.body.message?.toolCalls?.[0]?.function?.arguments?.reservation_id;
 
-        if (!reservation_id) return res.json({ success: false, message: "ID fehlt" });
+        console.log("DEBUG: Versuche Storno für ID:", reservation_id);
+
+        if (!reservation_id) {
+            console.error("Fehler: Keine ID im Request gefunden!");
+            return res.json({ success: false, message: "ID fehlt" });
+        }
 
         await axios.patch(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}/${reservation_id}`, 
             { fields: { status: "storniert" } },
             { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}`, "Content-Type": "application/json" } }
         );
 
+        console.log("Erfolg: Status in Airtable auf storniert gesetzt.");
         return res.json({ success: true });
     } catch (err) {
+        console.error("Airtable Fehler:", err.response?.data || err.message);
         res.json({ success: false, error: err.message });
     }
 });
