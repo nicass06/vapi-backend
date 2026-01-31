@@ -144,19 +144,21 @@ app.post("/check-availability", async (req, res) => {
 app.post("/create-reservation", async (req, res) => {
     try {
         const args = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
-        const dateObj = getFormattedDate(args.date);
-        const reqMin = timeToMinutes(args.time_text);
+        const { date, time_text, guests, name } = args;
+        const phone = extractPhone(req);
+        const normalizedDate = normalizeDate(date);
         
-        // Erstellung der ISO-Zeitstempel für Airtable
-        const startISO = `${dateObj.iso}T${args.time_text}:00.000Z`;
-        const endISO = `${dateObj.iso}T${toHHMM(reqMin + SLOT_DURATION_MIN)}:00.000Z`;
+        const reqMin = timeToMinutes(time_text);
+        const startISO = `${normalizedDate}T${time_text}:00.000Z`;
+        const endISO = `${normalizedDate}T${toHHMM(reqMin + SLOT_DURATION_MIN)}:00.000Z`;
 
         await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             fields: {
-                date: dateObj.german,
-                time_text: args.time_text,
-                guests: parseInt(args.guests || 1, 10),
-                name: args.name,
+                date: normalizedDate,
+                time_text,
+                guests: parseInt(guests || 1, 10),
+                name,
+                phone,
                 status: "bestätigt",
                 start_datetime: startISO,
                 end_datetime: endISO
@@ -165,7 +167,7 @@ app.post("/create-reservation", async (req, res) => {
 
         return res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        res.json({ success: false, error: err.message });
     }
 });
 
