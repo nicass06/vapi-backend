@@ -12,44 +12,43 @@ const RESERVATIONS_TABLE = "Reservations";
 const OPENING_HOURS_TABLE = "opening_hours";
 const OPENING_EXCEPTIONS_TABLE = "opening_exceptions";
 
-const MAX_CAPACITY = parseInt(process.env.MAX_CAPACITY || "10");
-const SLOT_DURATION_MIN = parseInt(process.env.SLOT_DURATION || "120");
+// SICHERHEIT: Standardwerte falls env fehlt
+const MAX_CAPACITY = parseInt(process.env.MAX_CAPACITY || "15", 10);
+const SLOT_DURATION_MIN = parseInt(process.env.SLOT_DURATION || "120", 10);
 
 // ========================
 // HILFSFUNKTIONEN
 // ========================
 
 function extractPhone(req) {
-    const metadata = req.body.message?.call?.customer?.number || 
-                     req.body.call?.customer?.number || 
-                     req.body.customer?.number;
-    if (metadata && metadata.length > 5 && !metadata.includes('{')) return metadata;
-    const paramPhone = req.body.phone || req.body.message?.toolCalls?.[0]?.function?.arguments?.phone;
-    if (paramPhone && paramPhone.length > 5 && !paramPhone.includes('{')) return paramPhone;
-    return "Unbekannt";
+    const body = req.body;
+    const phone = body.message?.call?.customer?.number || 
+                  body.call?.customer?.number || 
+                  body.customer?.number || 
+                  body.phone || 
+                  body.message?.toolCalls?.[0]?.function?.arguments?.phone;
+    
+    return (phone && typeof phone === 'string' && phone.length > 5) ? phone : "Unbekannt";
 }
 
 function normalizeDate(dateInput) {
-    if (!dateInput) return null;
-    let today = new Date();
-    today.setHours(0, 0, 0, 0);
-    let candidate;
+    if (!dateInput) return new Date().toISOString().slice(0, 10);
     const lowerInput = dateInput.toLowerCase();
+    let candidate = new Date();
+    candidate.setHours(0, 0, 0, 0);
 
-    if (lowerInput === "today" || lowerInput === "heute") {
-        candidate = new Date(today);
-    } else if (lowerInput === "tomorrow" || lowerInput === "morgen") {
-        candidate = new Date(today);
+    if (lowerInput.includes("heute") || lowerInput === "today") {
+        // bleibt heute
+    } else if (lowerInput.includes("morgen") && !lowerInput.includes("über")) {
         candidate.setDate(candidate.getDate() + 1);
-    } else if (lowerInput === "day_after_tomorrow" || lowerInput === "übermorgen") {
-        candidate = new Date(today);
+    } else if (lowerInput.includes("übermorgen")) {
         candidate.setDate(candidate.getDate() + 2);
     } else {
         const parts = dateInput.split(".");
         if (parts.length >= 2) {
             let day = parseInt(parts[0], 10);
             let month = parseInt(parts[1], 10) - 1;
-            let year = parts[2] ? parseInt(parts[2], 10) : today.getFullYear();
+            let year = parts[2] ? parseInt(parts[2], 10) : candidate.getFullYear();
             candidate = new Date(year, month, day);
         } else {
             candidate = new Date(dateInput);
@@ -58,10 +57,9 @@ function normalizeDate(dateInput) {
     return candidate.toISOString().slice(0, 10);
 }
 
-// Rechnet "18:00" ODER Sekunden (57600) in Minuten um
 const timeToMinutes = (timeVal) => {
     if (timeVal === undefined || timeVal === null) return 0;
-    if (typeof timeVal === 'number') return Math.floor(timeVal / 60);
+    if (typeof timeVal === 'number') return Math.floor(timeVal / 60); // Airtable Sekunden
     if (typeof timeVal === 'string') {
         const parts = timeVal.split(":");
         if (parts.length < 2) return 0;
@@ -78,13 +76,10 @@ const toHHMM = (min) => {
 
 async function getOpeningForDate(dateISO) {
     const weekdayMap = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
-    const dateObj = new Date(dateISO);
-    const germanWeekday = weekdayMap[dateObj.getDay()];
-    
-    console.log(`Prüfe Öffnungszeiten für: ${dateISO} (${germanWeekday})`);
+    const germanWeekday = weekdayMap[new Date(dateISO).getDay()];
 
     try {
-        // 1. Exceptions (Feiertage)
+        // Check Exceptions
         const exRes = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${OPENING_EXCEPTIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
             params: { filterByFormula: `{date}='${dateISO}'` }
@@ -96,20 +91,17 @@ async function getOpeningForDate(dateISO) {
             return { closed: false, open: ex.open_time, close: ex.close_time };
         }
 
-        // 2. Reguläre Zeiten (Filter vereinfacht, falls restaurant_id Probleme macht)
+        // Check Regular Hours
         const hoursRes = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${OPENING_HOURS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
             params: { filterByFormula: `{weekday}="${germanWeekday}"` }
         });
 
         if (hoursRes.data.records.length === 0) return { closed: true };
-        
-        const fields = hoursRes.data.records[0].fields;
-        console.log(`Airtable liefert: ${fields.open_time} bis ${fields.close_time}`);
-        return { closed: false, open: fields.open_time, close: fields.close_time };
-    } catch (e) { 
-        console.error("Fehler bei getOpeningForDate:", e.message);
-        return { closed: true }; 
+        const f = hoursRes.data.records[0].fields;
+        return { closed: false, open: f.open_time, close: f.close_time };
+    } catch (e) {
+        return { closed: true };
     }
 }
 
@@ -118,19 +110,18 @@ async function getOpeningForDate(dateISO) {
 // ========================
 
 app.post("/check-availability", async (req, res) => {
+    console.log("--- NEUER CHECK ---");
     try {
         const args = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
         const { date, time_text, guests } = args;
         
         const normalizedDate = normalizeDate(date);
         const reqMin = timeToMinutes(time_text);
-        const numGuests = parseInt(guests || 1);
+        const numGuests = parseInt(guests || 1, 10);
 
-        // 1. Öffnungszeiten prüfen
+        // 1. Öffnungszeiten
         const opening = await getOpeningForDate(normalizedDate);
-        if (opening.closed) {
-            return res.json({ success: true, available: false, message: "Geschlossen." });
-        }
+        if (opening.closed) return res.json({ success: true, available: false, message: "Geschlossen." });
 
         const openMin = timeToMinutes(opening.open);
         const closeMin = timeToMinutes(opening.close);
@@ -139,8 +130,9 @@ app.post("/check-availability", async (req, res) => {
             return res.json({ success: true, available: false, message: "Außerhalb der Öffnungszeiten." });
         }
 
-        // 2. KAPAZITÄTS-CHECK (Die wichtige Korrektur)
-        const resRecords = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
+        // 2. Kapazität prüfen
+        const airtableUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`;
+        const resRecords = await axios.get(airtableUrl, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
             params: { 
                 filterByFormula: `AND({date}='${normalizedDate}', {status}='bestätigt')` 
@@ -148,33 +140,32 @@ app.post("/check-availability", async (req, res) => {
         });
 
         let currentLoad = 0;
+        console.log(`Gefundene Reservierungen für ${normalizedDate}: ${resRecords.data.records.length}`);
+
         resRecords.data.records.forEach(record => {
             const start = timeToMinutes(record.fields.time_text);
             const end = start + SLOT_DURATION_MIN;
-            
-            // Prüfen, ob sich der Zeitraum mit der neuen Anfrage überschneidet
+            const guestsInRecord = parseInt(record.fields.guests || 0, 10);
+
+            // Überschneidungs-Logik
             if (reqMin < end && (reqMin + SLOT_DURATION_MIN) > start) {
-                currentLoad += (parseInt(record.fields.guests) || 0);
+                currentLoad += guestsInRecord;
+                console.log(`  -> Blockiert durch: ${record.fields.name} (${guestsInRecord} Pers.)`);
             }
         });
 
-        console.log(`Kapazitäts-Check für ${time_text}: Belegt: ${currentLoad} | Kapazität: ${MAX_CAPACITY} | Neue Gäste: ${numGuests}`);
+        const isAvailable = (currentLoad + numGuests) <= MAX_CAPACITY;
+        console.log(`Status: Belegt=${currentLoad}, Kapazität=${MAX_CAPACITY}, Wunsch=${numGuests} -> Frei=${isAvailable}`);
 
-        if (currentLoad + numGuests > MAX_CAPACITY) {
-            console.log("ERGEBNIS: Ausgebucht!");
-            return res.json({ 
-                success: true, 
-                available: false, 
-                message: "Leider sind wir zu dieser Zeit bereits ausgebucht." 
-            });
-        }
+        return res.json({ 
+            success: true, 
+            available: isAvailable, 
+            message: isAvailable ? "Tisch verfügbar" : `Leider ausgebucht. Aktuell sind schon ${currentLoad} Plätze belegt.`
+        });
 
-        console.log("ERGEBNIS: Tisch frei!");
-        return res.json({ success: true, available: true });
-
-    } catch (err) { 
-        console.error("Check Error:", err.message);
-        res.json({ success: false, error: err.message }); 
+    } catch (err) {
+        console.error("KRITISCHER FEHLER:", err.message);
+        res.json({ success: false, error: err.message });
     }
 });
 
@@ -185,18 +176,15 @@ app.post("/create-reservation", async (req, res) => {
         const phone = extractPhone(req);
         const normalizedDate = normalizeDate(date);
         
-        // Berechnung für Start und Ende
         const reqMin = timeToMinutes(time_text);
         const startISO = `${normalizedDate}T${time_text}:00.000Z`;
         const endISO = `${normalizedDate}T${toHHMM(reqMin + SLOT_DURATION_MIN)}:00.000Z`;
-
-        console.log(`Erstelle Reservierung: ${name} am ${normalizedDate} um ${time_text}`);
 
         await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             fields: {
                 date: normalizedDate,
                 time_text,
-                guests: parseInt(guests || 1),
+                guests: parseInt(guests || 1, 10),
                 name,
                 phone,
                 status: "bestätigt",
@@ -206,9 +194,8 @@ app.post("/create-reservation", async (req, res) => {
         }, { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } });
 
         return res.json({ success: true });
-    } catch (err) { 
-        console.error("Fehler beim Erstellen:", err.response?.data || err.message);
-        res.json({ success: false, error: err.message }); 
+    } catch (err) {
+        res.json({ success: false, error: err.message });
     }
 });
 
