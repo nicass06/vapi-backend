@@ -126,45 +126,52 @@ app.post("/check-availability", async (req, res) => {
         const reqMin = timeToMinutes(time_text);
         const numGuests = parseInt(guests || 1);
 
+        // 1. Öffnungszeiten prüfen
         const opening = await getOpeningForDate(normalizedDate);
-        
         if (opening.closed) {
-            return res.json({ success: true, available: false, message: "Wir haben an diesem Tag geschlossen." });
+            return res.json({ success: true, available: false, message: "Geschlossen." });
         }
 
         const openMin = timeToMinutes(opening.open);
         const closeMin = timeToMinutes(opening.close);
 
-        console.log(`Vergleich: Wunsch ${reqMin}m | Offen ${openMin}m - ${closeMin}m`);
-
-        if (reqMin < openMin || (reqMin + 30) > closeMin) { // Puffer von 30 Min vor Schluss
-            return res.json({ 
-                success: true, 
-                available: false, 
-                message: `Außerhalb der Zeiten. Wir haben von ${toHHMM(openMin)} bis ${toHHMM(closeMin)} offen.` 
-            });
+        if (reqMin < openMin || (reqMin + 30) > closeMin) {
+            return res.json({ success: true, available: false, message: "Außerhalb der Öffnungszeiten." });
         }
 
-        // Kapazitäts-Check
+        // 2. KAPAZITÄTS-CHECK (Die wichtige Korrektur)
         const resRecords = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { filterByFormula: `AND({date}='${normalizedDate}', {status}='bestätigt')` }
+            params: { 
+                filterByFormula: `AND({date}='${normalizedDate}', {status}='bestätigt')` 
+            }
         });
 
         let currentLoad = 0;
         resRecords.data.records.forEach(record => {
             const start = timeToMinutes(record.fields.time_text);
             const end = start + SLOT_DURATION_MIN;
+            
+            // Prüfen, ob sich der Zeitraum mit der neuen Anfrage überschneidet
             if (reqMin < end && (reqMin + SLOT_DURATION_MIN) > start) {
                 currentLoad += (parseInt(record.fields.guests) || 0);
             }
         });
 
+        console.log(`Kapazitäts-Check für ${time_text}: Belegt: ${currentLoad} | Kapazität: ${MAX_CAPACITY} | Neue Gäste: ${numGuests}`);
+
         if (currentLoad + numGuests > MAX_CAPACITY) {
-            return res.json({ success: true, available: false, message: "Leider ausgebucht." });
+            console.log("ERGEBNIS: Ausgebucht!");
+            return res.json({ 
+                success: true, 
+                available: false, 
+                message: "Leider sind wir zu dieser Zeit bereits ausgebucht." 
+            });
         }
 
+        console.log("ERGEBNIS: Tisch frei!");
         return res.json({ success: true, available: true });
+
     } catch (err) { 
         console.error("Check Error:", err.message);
         res.json({ success: false, error: err.message }); 
