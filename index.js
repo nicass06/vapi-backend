@@ -80,116 +80,69 @@ const toHHMM = (min) => {
     return `${h}:${m}`;
 };
 
-// 1. Hilfsfunktion zum Umrechnen der Airtable-Sekunden
-function formatAirtableTime(input) {
-    if (typeof input === 'number') {
-        const hours = Math.floor(input / 3600).toString().padStart(2, '0');
-        const minutes = Math.floor((input % 3600) / 60).toString().padStart(2, '0');
-        return `${hours}:${minutes}`;
-    }
-    return input; // Falls es schon "17:00" als Text ist
-}
-
-// 2. Die verbesserte Hauptfunktion
 async function getOpeningForDate(dateISO) {
     const weekdayMap = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
-    const dateObj = new Date(dateISO);
-    const germanWeekday = weekdayMap[dateObj.getDay()];
-    
-    console.log(`--- DEBUG ÖFFNUNGSZEITEN START ---`);
-    console.log(`Datum: ${dateISO}, Wochentag: ${germanWeekday}`);
-
+    const germanWeekday = weekdayMap[new Date(dateISO).getDay()];
     try {
-        // Exceptions prüfen (Urlaub/Feiertage)
         const exRes = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${OPENING_EXCEPTIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
             params: { filterByFormula: `{date}='${dateISO}'` }
         });
-
         if (exRes.data.records.length > 0) {
             const ex = exRes.data.records[0].fields;
-            if (ex.closed) return { closed: true };
-            return { 
-                closed: false, 
-                open: formatAirtableTime(ex.open_time), 
-                close: formatAirtableTime(ex.close_time) 
-            };
+            if (ex.closed) return { closed: true, reason: ex.reason || "geschlossen" };
+            return { closed: false, open: ex.open_time, close: ex.close_time };
         }
-
-        // Reguläre Zeiten prüfen
         const hoursRes = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${OPENING_HOURS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { filterByFormula: `{weekday}="${germanWeekday}"` }
+            params: { filterByFormula: `AND({restaurant_id}="main", {weekday}="${germanWeekday}")` }
         });
-
-        if (hoursRes.data.records.length === 0) {
-            console.log("Kein Eintrag für diesen Wochentag gefunden.");
-            return { closed: true };
-        }
-        
+        if (hoursRes.data.records.length === 0) return { closed: true, reason: "Kein Eintrag" };
         const fields = hoursRes.data.records[0].fields;
-        const open = formatAirtableTime(fields.open_time);
-        const close = formatAirtableTime(fields.close_time);
-
-        console.log(`Airtable Rohdaten: ${fields.open_time} / Formatiert: ${open}`);
-        console.log(`Ergebnis: Offen von ${open} bis ${close}`);
-        
-        return { closed: false, open, close };
-    } catch (e) { 
-        console.error("Fehler:", e.message);
-        return { closed: true }; 
-    }
+        return { closed: false, open: fields.open_time, close: fields.close_time };
+    } catch (e) { return { closed: true, reason: "Fehler bei Abfrage" }; }
 }
 
 // ========================
 // ROUTES
 // ========================
 
-// Hilfsfunktion: Macht aus "18:30" eine Zahl (1830) zum einfachen Vergleichen
-function timeToNumber(timeStr) {
-    return parseInt(timeStr.replace(":", ""), 10);
-}
-
 app.post("/check-availability", async (req, res) => {
     try {
-        const { date, time_text } = req.body;
-        const opening = await getOpeningForDate(date);
+        const { date, time_text, guests } = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
+        const normalizedDate = normalizeDate(date);
+        const reqMin = timeToMinutes(time_text);
+        const numGuests = parseInt(guests || 0);
 
-        if (opening.closed) {
-            return res.json({ success: false, message: "Wir haben an diesem Tag geschlossen." });
+        const opening = await getOpeningForDate(normalizedDate);
+        if (opening.closed) return res.json({ success: true, available: false, message: `Wir haben am ${normalizedDate} leider geschlossen.` });
+
+        const openMin = timeToMinutes(opening.open);
+        const closeMin = timeToMinutes(opening.close);
+        if (reqMin < openMin || (reqMin + SLOT_DURATION_MIN) > closeMin) {
+            return res.json({ success: true, available: false, message: `Außerhalb der Öffnungszeiten.` });
         }
 
-        // ZEIT-CHECK LOGIK
-        const checkTime = timeToNumber(time_text);
-        const openTime = timeToNumber(opening.open);
-        const closeTime = timeToNumber(opening.close);
-
-        console.log(`Check: ${checkTime} zwischen ${openTime} und ${closeTime}?`);
-
-        if (checkTime < openTime || checkTime > closeTime) {
-            return res.json({ 
-                success: false, 
-                message: `Außerhalb der Öffnungszeiten. Wir haben von ${opening.open} bis ${opening.close} Uhr offen.` 
-            });
-        }
-
-        // ... hier folgt dein bisheriger Airtable-Check für die Kapazität ...
-        const search = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
+        const resRecords = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { 
-                filterByFormula: `AND({date}='${date}', {time_text}='${time_text}', {status}='bestätigt')` 
+            params: { filterByFormula: `{status}="bestätigt"` }
+        });
+
+        let currentLoad = 0;
+        resRecords.data.records.forEach(record => {
+            const fields = record.fields;
+            if (fields.date === normalizedDate) {
+                const existingStart = timeToMinutes(fields.time_text);
+                const existingEnd = existingStart + SLOT_DURATION_MIN;
+                if (reqMin < existingEnd && (reqMin + SLOT_DURATION_MIN) > existingStart) {
+                    currentLoad += (parseInt(fields.guests) || 0);
+                }
             }
         });
 
-        if (search.data.records.length < MAX_CAPACITY) {
-            res.json({ success: true });
-        } else {
-            res.json({ success: false, message: "Leider ausgebucht." });
-        }
-
-    } catch (err) {
-        res.json({ success: false, error: err.message });
-    }
+        if (currentLoad + numGuests > MAX_CAPACITY) return res.json({ success: true, available: false, message: "Leider ausgebucht." });
+        return res.json({ success: true, available: true });
+    } catch (err) { res.json({ success: false, error: err.message }); }
 });
 
 app.post("/create-reservation", async (req, res) => {
