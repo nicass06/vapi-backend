@@ -147,26 +147,22 @@ app.post("/create-reservation", async (req, res) => {
         const dateObj = getFormattedDate(args.date);
         const reqMin = timeToMinutes(args.time_text);
         
-        // Wir bauen die Zeitstempel ohne das "Z" am Ende, 
-        // um Konflikte mit der lokalen Zeit in Airtable zu vermeiden.
-        const startISO = `${dateObj.iso}T${args.time_text}:00.000`;
-        const endISO = `${dateObj.iso}T${toHHMM(reqMin + SLOT_DURATION_MIN)}:00.000`;
+        // Airtable schluckt dieses Format am besten: "YYYY-MM-DD HH:mm"
+        // Wir nehmen das ISO-Datum und hängen die Uhrzeit einfach dran.
+        const startTimestamp = `${dateObj.iso} ${args.time_text}`;
+        const endTimestamp = `${dateObj.iso} ${toHHMM(reqMin + SLOT_DURATION_MIN)}`;
 
-        console.log("Sende an Airtable:", {
-            date: dateObj.german,
-            start: startISO,
-            end: endISO
-        });
+        console.log(`Versuche Eintrag: ${args.name} am ${dateObj.german} von ${startTimestamp} bis ${endTimestamp}`);
 
         const payload = {
             fields: {
-                date: dateObj.german,
-                time_text: String(args.time_text),
-                guests: parseInt(args.guests || 1, 10),
-                name: String(args.name || "Kein Name"),
-                status: "bestätigt",
-                start_datetime: startISO,
-                end_datetime: endISO
+                "date": dateObj.german,
+                "time_text": String(args.time_text),
+                "guests": parseInt(args.guests || 1, 10),
+                "name": String(args.name || "Gast"),
+                "status": "bestätigt",
+                "start_datetime": startTimestamp, // Format: 2026-01-31 18:00
+                "end_datetime": endTimestamp      // Format: 2026-01-31 20:00
             }
         };
 
@@ -176,16 +172,20 @@ app.post("/create-reservation", async (req, res) => {
             { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}`, "Content-Type": "application/json" } }
         );
 
+        console.log("Erfolg! Airtable ID:", response.data.id);
         return res.json({ success: true });
+
     } catch (err) {
-        // DAS HIER IST ENTSCHEIDEND:
-        // Es zeigt dir im Render-Log genau, warum Airtable "Nein" sagt.
-        const airtableError = err.response?.data?.error;
-        console.error("AIRTABLE REJECTED:", airtableError || err.message);
+        // Jetzt loggen wir den EXAKTEN Grund von Airtable
+        if (err.response && err.response.data) {
+            console.error("AIRTABLE FEHLER DETAILS:", JSON.stringify(err.response.data.error));
+        } else {
+            console.error("FEHLER:", err.message);
+        }
         
         res.status(500).json({ 
             success: false, 
-            error: airtableError?.message || err.message 
+            error: err.response?.data?.error?.message || err.message 
         });
     }
 });
