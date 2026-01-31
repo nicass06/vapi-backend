@@ -13,7 +13,7 @@ const OPENING_HOURS_TABLE = "opening_hours";
 const OPENING_EXCEPTIONS_TABLE = "opening_exceptions";
 
 const MAX_CAPACITY = process.env.MAX_CAPACITY;
-const SLOT_DURATION = process.env.SLOT_DURATION;
+const SLOT_DURATION_MIN = process.env.SLOT_DURATION;
 
 // ========================
 // HILFSFUNKTIONEN
