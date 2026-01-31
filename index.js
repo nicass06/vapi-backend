@@ -32,11 +32,13 @@ function extractPhone(req) {
 }
 
 function normalizeDate(dateInput) {
-    if (!dateInput) return new Date().toISOString().slice(0, 10);
+    if (!dateInput) return "";
+    let today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let candidate = new Date(today);
     const lowerInput = dateInput.toLowerCase();
-    let candidate = new Date();
-    candidate.setHours(0, 0, 0, 0);
 
+    // 1. Relative Begriffe verarbeiten
     if (lowerInput.includes("heute") || lowerInput === "today") {
         // bleibt heute
     } else if (lowerInput.includes("morgen") && !lowerInput.includes("über")) {
@@ -44,19 +46,27 @@ function normalizeDate(dateInput) {
     } else if (lowerInput.includes("übermorgen")) {
         candidate.setDate(candidate.getDate() + 2);
     } else {
+        // 2. Festes Datum parsen (z.B. "31.01.2026" oder "2026-01-31")
         const parts = dateInput.split(".");
         if (parts.length >= 2) {
             let day = parseInt(parts[0], 10);
             let month = parseInt(parts[1], 10) - 1;
-            let year = parts[2] ? parseInt(parts[2], 10) : candidate.getFullYear();
+            let year = parts[2] ? parseInt(parts[2], 10) : today.getFullYear();
             candidate = new Date(year, month, day);
         } else {
             candidate = new Date(dateInput);
         }
     }
-    return candidate.toISOString().slice(0, 10);
-}
 
+    // 3. EXAKT für Airtable formatieren: DD.MM.YYYY
+    const d = String(candidate.getDate()).padStart(2, '0');
+    const m = String(candidate.getMonth() + 1).padStart(2, '0');
+    const y = candidate.getFullYear();
+
+    const germanDate = `${d}.${m}.${y}`;
+    console.log(`Datum konvertiert: von "${dateInput}" zu "${germanDate}"`);
+    return germanDate;
+}
 const timeToMinutes = (timeVal) => {
     if (timeVal === undefined || timeVal === null) return 0;
     if (typeof timeVal === 'number') return Math.floor(timeVal / 60); // Airtable Sekunden
