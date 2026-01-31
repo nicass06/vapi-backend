@@ -82,25 +82,45 @@ const toHHMM = (min) => {
 
 async function getOpeningForDate(dateISO) {
     const weekdayMap = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
-    const germanWeekday = weekdayMap[new Date(dateISO).getDay()];
+    const dateObj = new Date(dateISO);
+    const germanWeekday = weekdayMap[dateObj.getDay()];
+    
+    console.log(`--- DEBUG ÖFFNUNGSZEITEN START ---`);
+    console.log(`Datum: ${dateISO}, Erkannt als: ${germanWeekday}`);
+
     try {
+        // 1. Exceptions prüfen
         const exRes = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${OPENING_EXCEPTIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
             params: { filterByFormula: `{date}='${dateISO}'` }
         });
+
         if (exRes.data.records.length > 0) {
             const ex = exRes.data.records[0].fields;
-            if (ex.closed) return { closed: true, reason: ex.reason || "geschlossen" };
+            console.log(`Exception gefunden: ${ex.closed ? 'GESCHLOSSEN' : 'GEÄNDERT: ' + ex.open_time}`);
+            if (ex.closed) return { closed: true };
             return { closed: false, open: ex.open_time, close: ex.close_time };
         }
+
+        // 2. Reguläre Öffnungszeiten
         const hoursRes = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${OPENING_HOURS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { filterByFormula: `AND({restaurant_id}="main", {weekday}="${germanWeekday}")` }
+            params: { filterByFormula: `{weekday}="${germanWeekday}"` }
         });
-        if (hoursRes.data.records.length === 0) return { closed: true, reason: "Kein Eintrag" };
+
+        if (hoursRes.data.records.length === 0) {
+            console.warn(`KEIN EINTRAG in Airtable für Wochentag: ${germanWeekday}`);
+            return { closed: true };
+        }
+        
         const fields = hoursRes.data.records[0].fields;
+        console.log(`Airtable Ergebnis: Offen von ${fields.open_time} bis ${fields.close_time}`);
+        
         return { closed: false, open: fields.open_time, close: fields.close_time };
-    } catch (e) { return { closed: true, reason: "Fehler bei Abfrage" }; }
+    } catch (e) { 
+        console.error("KRITISCHER FEHLER in getOpeningForDate:", e.message);
+        return { closed: true }; 
+    }
 }
 
 // ========================
