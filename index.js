@@ -12,55 +12,66 @@ const RESERVATIONS_TABLE = "Reservations";
 const OPENING_HOURS_TABLE = "opening_hours";
 const OPENING_EXCEPTIONS_TABLE = "opening_exceptions";
 
-const MAX_CAPACITY = parseInt(process.env.MAX_CAPACITY || "15", 10);
-const SLOT_DURATION_MIN = parseInt(process.env.SLOT_DURATION || "120", 10);
+const MAX_CAPACITY = 10;
+const SLOT_DURATION_MIN = 120;
 
 // ========================
 // HILFSFUNKTIONEN
 // ========================
 
-// Diese Funktion gibt ein Objekt mit beiden Formaten zurück
-function getFormattedDate(dateInput) {
-    let candidate = new Date();
-    candidate.setHours(0, 0, 0, 0);
+function extractPhone(req) {
+    // Dieser Log zeigt uns ALLES, was Vapi sendet
+    console.log("VOLLER REQUEST BODY:", JSON.stringify(req.body));
+
+    const metadata = req.body.message?.call?.customer?.number || 
+                     req.body.call?.customer?.number || 
+                     req.body.customer?.number;
     
-    if (dateInput) {
-        const lowerInput = dateInput.toLowerCase();
-        if (lowerInput.includes("morgen") && !lowerInput.includes("über")) {
-            candidate.setDate(candidate.getDate() + 1);
-        } else if (lowerInput.includes("übermorgen")) {
-            candidate.setDate(candidate.getDate() + 2);
-        } else if (!lowerInput.includes("heute") && lowerInput !== "today") {
-            const parts = dateInput.split(".");
-            if (parts.length >= 2) {
-                let day = parseInt(parts[0], 10);
-                let month = parseInt(parts[1], 10) - 1;
-                let year = parts[2] ? parseInt(parts[2], 10) : candidate.getFullYear();
-                if (year < 100) year += 2000;
-                candidate = new Date(year, month, day);
-            } else {
-                candidate = new Date(dateInput);
-            }
+    if (metadata && metadata.length > 5 && !metadata.includes('{')) return metadata;
+
+    const paramPhone = req.body.phone || req.body.message?.toolCalls?.[0]?.function?.arguments?.phone;
+    if (paramPhone && paramPhone.length > 5 && !paramPhone.includes('{')) return paramPhone;
+
+    return "Unbekannt";
+}
+
+function normalizeDate(dateInput) {
+    if (!dateInput) return null;
+    let today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let candidate;
+    const lowerInput = dateInput.toLowerCase();
+
+    if (lowerInput === "today" || lowerInput === "heute") {
+        candidate = new Date(today);
+    } else if (lowerInput === "tomorrow" || lowerInput === "morgen") {
+        candidate = new Date(today);
+        candidate.setDate(candidate.getDate() + 1);
+    } else if (lowerInput === "day_after_tomorrow" || lowerInput === "übermorgen") {
+        candidate = new Date(today);
+        candidate.setDate(candidate.getDate() + 2);
+    } else {
+        const parts = dateInput.split(".");
+        if (parts.length >= 2) {
+            let day = parseInt(parts[0], 10);
+            let month = parseInt(parts[1], 10) - 1;
+            let year = parts[2] ? parseInt(parts[2], 10) : today.getFullYear();
+            candidate = new Date(year, month, day);
+        } else {
+            candidate = new Date(dateInput);
         }
     }
-
-    const d = String(candidate.getDate()).padStart(2, '0');
-    const m = String(candidate.getMonth() + 1).padStart(2, '0');
-    const y = candidate.getFullYear();
-
-    return {
-        german: `${d}.${m}.${y}`, // Für Airtable Suche
-        iso: `${y}-${m}-${d}`,    // Für Wochentag-Berechnung
-        jsDate: candidate         // Als Objekt
-    };
+    return candidate.toISOString().slice(0, 10);
 }
 
 const timeToMinutes = (timeVal) => {
     if (!timeVal) return 0;
     if (typeof timeVal === 'number') return Math.floor(timeVal / 60);
-    const parts = String(timeVal).split(":");
-    if (parts.length < 2) return 0;
-    return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+    if (typeof timeVal === 'string') {
+        const parts = timeVal.split(":");
+        return parts.length < 2 ? 0 : parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+    }
+    return 0;
 };
 
 const toHHMM = (min) => {
@@ -69,35 +80,27 @@ const toHHMM = (min) => {
     return `${h}:${m}`;
 };
 
-async function getOpeningForDate(dateObj) {
+async function getOpeningForDate(dateISO) {
     const weekdayMap = ["Sonntag","Montag","Dienstag","Mittwoch","Donnerstag","Freitag","Samstag"];
-    const germanWeekday = weekdayMap[dateObj.jsDate.getDay()];
-
+    const germanWeekday = weekdayMap[new Date(dateISO).getDay()];
     try {
-        // Exceptions prüfen mit deutschem Format
         const exRes = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${OPENING_EXCEPTIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { filterByFormula: `{date}='${dateObj.german}'` }
+            params: { filterByFormula: `{date}='${dateISO}'` }
         });
-
         if (exRes.data.records.length > 0) {
             const ex = exRes.data.records[0].fields;
-            if (ex.closed) return { closed: true };
+            if (ex.closed) return { closed: true, reason: ex.reason || "geschlossen" };
             return { closed: false, open: ex.open_time, close: ex.close_time };
         }
-
         const hoursRes = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${OPENING_HOURS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { filterByFormula: `{weekday}="${germanWeekday}"` }
+            params: { filterByFormula: `AND({restaurant_id}="main", {weekday}="${germanWeekday}")` }
         });
-
-        if (hoursRes.data.records.length === 0) return { closed: true };
-        const f = hoursRes.data.records[0].fields;
-        return { closed: false, open: f.open_time, close: f.close_time };
-    } catch (e) {
-        console.error("Airtable Error:", e.message);
-        return { closed: true };
-    }
+        if (hoursRes.data.records.length === 0) return { closed: true, reason: "Kein Eintrag" };
+        const fields = hoursRes.data.records[0].fields;
+        return { closed: false, open: fields.open_time, close: fields.close_time };
+    } catch (e) { return { closed: true, reason: "Fehler bei Abfrage" }; }
 }
 
 // ========================
@@ -106,79 +109,67 @@ async function getOpeningForDate(dateObj) {
 
 app.post("/check-availability", async (req, res) => {
     try {
-        const args = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
-        const dateObj = getFormattedDate(args.date);
-        const reqMin = timeToMinutes(args.time_text);
-        const numGuests = parseInt(args.guests || 1, 10);
+        const { date, time_text, guests } = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
+        const normalizedDate = normalizeDate(date);
+        const reqMin = timeToMinutes(time_text);
+        const numGuests = parseInt(guests || 0);
 
-        const opening = await getOpeningForDate(dateObj);
-        if (opening.closed) return res.json({ success: true, available: false, message: "Geschlossen." });
+        const opening = await getOpeningForDate(normalizedDate);
+        if (opening.closed) return res.json({ success: true, available: false, message: `Wir haben am ${normalizedDate} leider geschlossen.` });
 
         const openMin = timeToMinutes(opening.open);
         const closeMin = timeToMinutes(opening.close);
-
-        if (reqMin < openMin || (reqMin + 30) > closeMin) {
-            return res.json({ success: true, available: false, message: "Außerhalb der Öffnungszeiten." });
+        if (reqMin < openMin || (reqMin + SLOT_DURATION_MIN) > closeMin) {
+            return res.json({ success: true, available: false, message: `Außerhalb der Öffnungszeiten.` });
         }
 
         const resRecords = await axios.get(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` },
-            params: { filterByFormula: `AND({date}='${dateObj.german}', {status}='bestätigt')` }
+            params: { filterByFormula: `{status}="bestätigt"` }
         });
 
         let currentLoad = 0;
-        resRecords.data.records.forEach(r => {
-            const start = timeToMinutes(r.fields.time_text);
-            if (reqMin < (start + SLOT_DURATION_MIN) && (reqMin + SLOT_DURATION_MIN) > start) {
-                currentLoad += (parseInt(r.fields.guests) || 0);
+        resRecords.data.records.forEach(record => {
+            const fields = record.fields;
+            if (fields.date === normalizedDate) {
+                const existingStart = timeToMinutes(fields.time_text);
+                const existingEnd = existingStart + SLOT_DURATION_MIN;
+                if (reqMin < existingEnd && (reqMin + SLOT_DURATION_MIN) > existingStart) {
+                    currentLoad += (parseInt(fields.guests) || 0);
+                }
             }
         });
 
-        const isAvailable = (currentLoad + numGuests) <= MAX_CAPACITY;
-        return res.json({ success: true, available: isAvailable });
-    } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-    }
+        if (currentLoad + numGuests > MAX_CAPACITY) return res.json({ success: true, available: false, message: "Leider ausgebucht." });
+        return res.json({ success: true, available: true });
+    } catch (err) { res.json({ success: false, error: err.message }); }
 });
+
 app.post("/create-reservation", async (req, res) => {
     try {
-        const args = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
-        const dateObj = getFormattedDate(args.date); // Nutzt die Funktion, die german: "31.01.2026" liefert
-        const reqMin = timeToMinutes(args.time_text);
-        
-        // Formatierung auf DD.MM.YYYY HH:mm
-        const startTimeGerman = `${dateObj.german} ${args.time_text}`;
-        const endTimeGerman = `${dateObj.german} ${toHHMM(reqMin + SLOT_DURATION_MIN)}`;
+        const { date, time_text, guests, name } = req.body.message?.toolCalls?.[0]?.function?.arguments || req.body;
+        const phone = extractPhone(req);
+        const normalizedDate = normalizeDate(date);
+        const reqMin = timeToMinutes(time_text);
 
-        console.log(`Erstelle Eintrag im deutschen Format: ${startTimeGerman}`);
+        const startISO = `${normalizedDate}T${time_text}:00.000Z`;
+        const endISO = `${normalizedDate}T${toHHMM(reqMin + 120)}:00.000Z`;
 
-        const payload = {
+        await axios.post(`https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`, {
             fields: {
-                "date": dateObj.german,
-                "time_text": String(args.time_text),
-                "guests": parseInt(args.guests || 1, 10),
-                "name": String(args.name || "Gast"),
-                "status": "bestätigt",
-                "start_datetime": startTimeGerman, // Jetzt: "31.01.2026 18:00"
-                "end_datetime": endTimeGerman      // Jetzt: "31.01.2026 20:00"
+                date: normalizedDate,
+                time_text,
+                guests: parseInt(guests || 1),
+                name,
+                phone,
+                status: "bestätigt",
+                start_datetime: startISO,
+                end_datetime: endISO
             }
-        };
-
-        await axios.post(
-            `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${RESERVATIONS_TABLE}`,
-            payload,
-            { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}`, "Content-Type": "application/json" } }
-        );
+        }, { headers: { Authorization: `Bearer ${AIRTABLE_TOKEN}` } });
 
         return res.json({ success: true });
-
-    } catch (err) {
-        console.error("AIRTABLE FEHLER:", err.response?.data?.error || err.message);
-        res.status(500).json({ 
-            success: false, 
-            error: err.response?.data?.error?.message || err.message 
-        });
-    }
+    } catch (err) { res.json({ success: false, error: err.message }); }
 });
 
 app.post("/get-reservation-by-phone", async (req, res) => {
